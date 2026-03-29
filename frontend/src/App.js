@@ -156,7 +156,7 @@ function App() {
                   AI INCIDENT CO-PILOT
                 </h1>
                 <p className="text-xs font-mono text-[#9CA3AF] tracking-wider">
-                  UC/CC INFRASTRUCTURE ANALYSIS
+                  INTELLIGENT TICKET ANALYSIS
                 </p>
               </div>
             </div>
@@ -364,8 +364,8 @@ BUSINESS IMPACT: Service level effect`}
                     Paste an incident ticket on the left or select a sample ticket to see the AI-powered analysis in action.
                   </p>
                   <p className="text-xs font-mono text-[#9CA3AF]">
-                    RAG-POWERED | UC/CC SPECIALIZED | RUNBOOK-INTEGRATED
-                  </p>
+                  RAG-POWERED | AI ANALYSIS | RUNBOOK-INTEGRATED
+                </p>
                 </div>
               </div>
             )}
