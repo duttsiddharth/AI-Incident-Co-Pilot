@@ -93,14 +93,16 @@ async def analyze_ticket(input: TicketInput):
         )
         logger.info(f"RAG context retrieved: {len(rag_context)} chars")
         
-        # Call LLM for analysis
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        # Call LLM for analysis using standard OpenAI SDK
+        from openai import OpenAI
         
-        api_key = os.environ.get('EMERGENT_LLM_KEY')
+        api_key = os.environ.get('OPENAI_API_KEY')
         if not api_key:
-            raise HTTPException(status_code=500, detail="LLM API key not configured")
+            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
         
-        system_prompt = """You are an expert IT incident analyst for Unified Communications (UC) and Contact Center (CC) infrastructure.
+        client = OpenAI(api_key=api_key)
+        
+        system_prompt = """You are an expert IT incident analyst.
 
 Analyze the incident ticket and provide a structured response in STRICT JSON format.
 
@@ -132,14 +134,16 @@ RELEVANT RUNBOOK CONTEXT:
 
 Provide your analysis in the exact JSON format specified. Ensure resolution_steps are based on the runbook context when applicable."""
 
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=str(uuid.uuid4()),
-            system_message=system_prompt
-        ).with_model("openai", "gpt-4o-mini")
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.3
+        )
         
-        user_message = UserMessage(text=user_prompt)
-        response = await chat.send_message(user_message)
+        response = completion.choices[0].message.content
         
         log_entry.gpt_response = response
         logger.info(f"LLM response received: {response[:200]}...")
