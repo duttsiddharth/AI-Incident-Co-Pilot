@@ -1,0 +1,118 @@
+{
+  "theme_and_archetype": {
+    "theme": "light",
+    "archetype": "Archetype 4 (Swiss & High-Contrast)",
+    "description": "Objective, rigid, function-first control room. Perfect for IT incident management where clarity and rapid action are critical. Uses high-contrast monochromatic base with highly functional, intense accent colors for prioritization."
+  },
+  "color_palette": {
+    "background": {
+      "main": "#F8F9FA",
+      "surface": "#FFFFFF",
+      "surface_alt": "#F1F3F5",
+      "inverted": "#0B0C10"
+    },
+    "text": {
+      "primary": "#111827",
+      "secondary": "#4B5563",
+      "tertiary": "#9CA3AF",
+      "inverted": "#F9FAFB"
+    },
+    "borders": {
+      "default": "rgba(0,0,0,0.1)",
+      "strong": "rgba(0,0,0,0.8)"
+    },
+    "accents": {
+      "primary": "#0B0C10",
+      "primary_hover": "#1F2937",
+      "p1_critical": "#E63946",
+      "p2_high": "#F59E0B",
+      "p3_medium": "#2563EB",
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "error": "#E63946"
+    }
+  },
+  "typography": {
+    "font_families": {
+      "heading": "Chivo, sans-serif",
+      "body": "IBM Plex Sans, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl font-black tracking-tighter text-primary",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight text-primary",
+      "h3": "text-xl font-bold tracking-tight text-primary",
+      "h4": "text-lg font-semibold tracking-tight text-primary",
+      "body": "text-base leading-relaxed text-secondary",
+      "body_small": "text-sm leading-relaxed text-secondary",
+      "label_overline": "text-xs font-bold uppercase tracking-[0.15em] text-tertiary font-mono"
+    }
+  },
+  "spacing_and_layout": {
+    "strategy": "The 'Control Room' Grid (Mode B)",
+    "container": "w-full max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8",
+    "grid_system": {
+      "main_layout": "grid grid-cols-1 lg:grid-cols-12 gap-6 items-start",
+      "left_pane": "col-span-1 lg:col-span-4 flex flex-col gap-6 sticky top-6",
+      "right_pane": "col-span-1 lg:col-span-8 flex flex-col gap-6"
+    },
+    "bento_grid": "grid grid-cols-1 md:grid-cols-2 gap-4",
+    "padding": {
+      "card": "p-6",
+      "dense": "p-4"
+    }
+  },
+  "surface_styles": {
+    "card_default": "bg-white border border-black/10 rounded-none shadow-none",
+    "card_hover": "transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:border-black",
+    "terminal_block": "bg-[#0B0C10] text-[#F9FAFB] border border-black p-4 font-mono text-sm",
+    "glassmorphism": "Not recommended for this archetype. Stick to flat, solid surfaces."
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-black text-white hover:bg-gray-800 rounded-none font-bold tracking-wide px-6 py-3 border border-transparent transition-all active:translate-y-px",
+      "secondary": "bg-transparent text-black border border-black/20 hover:border-black rounded-none font-bold tracking-wide px-6 py-3 transition-all",
+      "ghost": "hover:bg-gray-100 text-black rounded-none px-4 py-2"
+    },
+    "inputs": {
+      "textarea": "min-h-[300px] w-full border border-black/20 bg-white p-4 font-mono text-sm focus:border-black focus:ring-1 focus:ring-black outline-none transition-all rounded-none resize-y",
+      "input": "w-full border border-black/20 bg-white px-4 py-2 text-sm focus:border-black focus:ring-1 focus:ring-black outline-none transition-all rounded-none"
+    },
+    "badges": {
+      "p1": "bg-red-50 text-red-600 border border-red-200 px-3 py-1 text-xs font-mono font-bold uppercase tracking-widest rounded-none inline-flex items-center gap-2",
+      "p2": "bg-amber-50 text-amber-600 border border-amber-200 px-3 py-1 text-xs font-mono font-bold uppercase tracking-widest rounded-none inline-flex items-center gap-2",
+      "p3": "bg-blue-50 text-blue-600 border border-blue-200 px-3 py-1 text-xs font-mono font-bold uppercase tracking-widest rounded-none inline-flex items-center gap-2",
+      "warning": "bg-[#FFF9DB] text-[#B08800] border border-[#FFE066] px-3 py-1 text-xs font-mono font-bold uppercase tracking-widest rounded-none inline-flex items-center gap-2"
+    },
+    "progress": {
+      "confidence_bar": "h-2 w-full bg-gray-100 overflow-hidden",
+      "confidence_fill": "h-full bg-black transition-all duration-1000 ease-out"
+    }
+  },
+  "motion_and_interactions": {
+    "loading_state": "Use an ASCII spinner (e.g., | / - \\) or a pulsing monochrome block. For the analyzing card, apply a subtle 'Tracing Beam' or border-pulse animation to indicate AI processing.",
+    "hover_states": "Crisp and immediate. Elements should feel tactile. Use sharp box-shadows (e.g., 4px 4px 0px black) rather than soft blur shadows.",
+    "transitions": "transition-all duration-200 ease-in-out"
+  },
+  "iconography": {
+    "library": "Phosphor Icons (@phosphor-icons/react)",
+    "style": "Regular or Bold weight. Keep them sharp and distinct.",
+    "usage": "Use icons strictly for functional meaning (e.g., Warning, Check, Copy, Arrows), not decoration."
+  },
+  "media_urls": {
+    "logo": {
+      "url": "https://images.unsplash.com/photo-1764601841441-34ebb3d42a78?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwZ2VvbWV0cmljJTIwYWJzdHJhY3QlMjBsb2dvfGVufDB8fHx8MTc3NDgxOTg0Mnww&ixlib=rb-4.1.0&q=85",
+      "description": "Minimalist geometric abstract logo for the top-left brand header"
+    }
+  },
+  "instructions_to_main_agent": [
+    "INSTALL FONTS: Ensure Chivo, IBM Plex Sans, and JetBrains Mono are imported via Google Fonts in index.html or index.css.",
+    "INSTALL ICONS: run `yarn add @phosphor-icons/react`.",
+    "SHADCN OVERRIDES: Override Shadcn component defaults. Remove `rounded-md` from everywhere to maintain the strict brutalist/Swiss aesthetic (`rounded-none`).",
+    "LAYOUT STRUCTURE: Use a strictly asymmetrical layout. A narrower left column for the raw ticket input, and a wider right column containing a bento grid of the AI Analysis results.",
+    "BRIDGE COMMUNICATION: Format the 'P1 Bridge Communication Updates' as a dark terminal-like block (`bg-[#0B0C10]`) so it stands out as a copy-paste artifact. Include a 'Copy to Clipboard' button.",
+    "CONFIDENCE SCORE: Display the score prominently. If score < 80, render the 'Needs Human Review' indicator using the warning badge style with a Phosphor Warning icon.",
+    "LOADING STATE: When the 'Analyze' button is clicked, disable the button and show a highly technical loading state (like 'ANALYZING THREAT VECTOR...' with an ASCII spinner) before rendering the right pane.",
+    "TESTING ATTRIBUTES: Add `data-testid` to all interactive elements (e.g., `data-testid=\"ticket-input\"`, `data-testid=\"analyze-button\"`, `data-testid=\"priority-badge\"`, `data-testid=\"bridge-update-copy\"`)."
+  ]
+}
