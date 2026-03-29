@@ -49,3 +49,7 @@ test_reports/
 *.bak
 *.tmp
 .cache/
+-e 
+# Environment files
+*.env
+*.env.*
