@@ -1,75 +1,81 @@
+@import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;700;900&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root {
+    --background-main: #F8F9FA;
+    --background-surface: #FFFFFF;
+    --background-surface-alt: #F1F3F5;
+    --background-inverted: #0B0C10;
+    
+    --text-primary: #111827;
+    --text-secondary: #4B5563;
+    --text-tertiary: #9CA3AF;
+    --text-inverted: #F9FAFB;
+    
+    --border-default: rgba(0,0,0,0.1);
+    --border-strong: rgba(0,0,0,0.8);
+    
+    --accent-primary: #0B0C10;
+    --accent-primary-hover: #1F2937;
+    --p1-critical: #E63946;
+    --p2-high: #F59E0B;
+    --p3-medium: #2563EB;
+    --success: #10B981;
+    --warning: #F59E0B;
+    --error: #E63946;
+}
+
 body {
     margin: 0;
-    font-family:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
-        "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-        sans-serif;
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    background-color: var(--background-main);
+    color: var(--text-primary);
+}
+
+.font-heading {
+    font-family: 'Chivo', sans-serif;
+}
+
+.font-mono {
+    font-family: 'JetBrains Mono', monospace;
 }
 
 code {
-    font-family:
-        source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+    font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, monospace;
 }
 
 @layer base {
     :root {
-        --background: 0 0% 100%;
-        --foreground: 0 0% 3.9%;
+        --background: 0 0% 98%;
+        --foreground: 220 15% 10%;
         --card: 0 0% 100%;
-        --card-foreground: 0 0% 3.9%;
+        --card-foreground: 220 15% 10%;
         --popover: 0 0% 100%;
-        --popover-foreground: 0 0% 3.9%;
-        --primary: 0 0% 9%;
+        --popover-foreground: 220 15% 10%;
+        --primary: 220 15% 6%;
         --primary-foreground: 0 0% 98%;
-        --secondary: 0 0% 96.1%;
-        --secondary-foreground: 0 0% 9%;
-        --muted: 0 0% 96.1%;
-        --muted-foreground: 0 0% 45.1%;
-        --accent: 0 0% 96.1%;
-        --accent-foreground: 0 0% 9%;
-        --destructive: 0 84.2% 60.2%;
+        --secondary: 220 10% 96%;
+        --secondary-foreground: 220 15% 10%;
+        --muted: 220 10% 96%;
+        --muted-foreground: 220 8% 45%;
+        --accent: 220 10% 96%;
+        --accent-foreground: 220 15% 10%;
+        --destructive: 0 70% 50%;
         --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 89.8%;
-        --input: 0 0% 89.8%;
-        --ring: 0 0% 3.9%;
+        --border: 220 10% 90%;
+        --input: 220 10% 90%;
+        --ring: 220 15% 10%;
         --chart-1: 12 76% 61%;
         --chart-2: 173 58% 39%;
         --chart-3: 197 37% 24%;
         --chart-4: 43 74% 66%;
         --chart-5: 27 87% 67%;
-        --radius: 0.5rem;
-    }
-    .dark {
-        --background: 0 0% 3.9%;
-        --foreground: 0 0% 98%;
-        --card: 0 0% 3.9%;
-        --card-foreground: 0 0% 98%;
-        --popover: 0 0% 3.9%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 0 0% 9%;
-        --secondary: 0 0% 14.9%;
-        --secondary-foreground: 0 0% 98%;
-        --muted: 0 0% 14.9%;
-        --muted-foreground: 0 0% 63.9%;
-        --accent: 0 0% 14.9%;
-        --accent-foreground: 0 0% 98%;
-        --destructive: 0 62.8% 30.6%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 14.9%;
-        --input: 0 0% 14.9%;
-        --ring: 0 0% 83.1%;
-        --chart-1: 220 70% 50%;
-        --chart-2: 160 60% 45%;
-        --chart-3: 30 80% 55%;
-        --chart-4: 280 65% 60%;
-        --chart-5: 340 75% 55%;
+        --radius: 0;
     }
 }
 
@@ -82,34 +88,172 @@ code {
     }
 }
 
+/* Custom component styles */
+.card-default {
+    @apply bg-white border border-black/10 shadow-none;
+    border-radius: 0;
+}
+
+.card-hover {
+    @apply transition-all duration-200;
+}
+
+.card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
+    border-color: black;
+}
+
+.terminal-block {
+    background-color: var(--background-inverted);
+    color: var(--text-inverted);
+    border: 1px solid black;
+    padding: 1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.875rem;
+    border-radius: 0;
+}
+
+.btn-primary {
+    @apply bg-black text-white font-bold tracking-wide px-6 py-3 border border-transparent transition-all;
+    border-radius: 0;
+}
+
+.btn-primary:hover {
+    @apply bg-gray-800;
+}
+
+.btn-primary:active {
+    transform: translateY(1px);
+}
+
+.btn-primary:disabled {
+    @apply bg-gray-400 cursor-not-allowed;
+}
+
+.btn-secondary {
+    @apply bg-transparent text-black border border-black/20 font-bold tracking-wide px-6 py-3 transition-all;
+    border-radius: 0;
+}
+
+.btn-secondary:hover {
+    @apply border-black;
+}
+
+.input-field {
+    @apply w-full border border-black/20 bg-white px-4 py-2 text-sm outline-none transition-all;
+    border-radius: 0;
+}
+
+.input-field:focus {
+    @apply border-black ring-1 ring-black;
+}
+
+.textarea-field {
+    @apply w-full border border-black/20 bg-white p-4 text-sm outline-none transition-all resize-y;
+    font-family: 'JetBrains Mono', monospace;
+    border-radius: 0;
+    min-height: 300px;
+}
+
+.textarea-field:focus {
+    @apply border-black ring-1 ring-black;
+}
+
+/* Priority badges */
+.badge-p1 {
+    @apply bg-red-50 text-red-600 border border-red-200 px-3 py-1 text-xs font-bold uppercase tracking-widest inline-flex items-center gap-2;
+    font-family: 'JetBrains Mono', monospace;
+    border-radius: 0;
+}
+
+.badge-p2 {
+    @apply bg-amber-50 text-amber-600 border border-amber-200 px-3 py-1 text-xs font-bold uppercase tracking-widest inline-flex items-center gap-2;
+    font-family: 'JetBrains Mono', monospace;
+    border-radius: 0;
+}
+
+.badge-p3 {
+    @apply bg-blue-50 text-blue-600 border border-blue-200 px-3 py-1 text-xs font-bold uppercase tracking-widest inline-flex items-center gap-2;
+    font-family: 'JetBrains Mono', monospace;
+    border-radius: 0;
+}
+
+.badge-warning {
+    @apply px-3 py-1 text-xs font-bold uppercase tracking-widest inline-flex items-center gap-2;
+    font-family: 'JetBrains Mono', monospace;
+    background-color: #FFF9DB;
+    color: #B08800;
+    border: 1px solid #FFE066;
+    border-radius: 0;
+}
+
+/* Confidence bar */
+.confidence-bar {
+    @apply h-2 w-full bg-gray-100 overflow-hidden;
+}
+
+.confidence-fill {
+    @apply h-full bg-black transition-all duration-1000 ease-out;
+}
+
+/* ASCII Loading Animation */
+@keyframes spin-ascii {
+    0% { content: '|'; }
+    25% { content: '/'; }
+    50% { content: '-'; }
+    75% { content: '\\'; }
+    100% { content: '|'; }
+}
+
+.loading-spinner::after {
+    content: '|';
+    animation: spin-ascii 0.5s infinite steps(4);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* Pulse animation for loading card */
+@keyframes pulse-border {
+    0%, 100% { border-color: rgba(0,0,0,0.2); }
+    50% { border-color: rgba(0,0,0,0.8); }
+}
+
+.loading-card {
+    animation: pulse-border 1.5s ease-in-out infinite;
+}
+
+/* Label overline style */
+.label-overline {
+    @apply text-xs font-bold uppercase tracking-widest;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-tertiary);
+}
+
+/* Scroll area customization */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--background-surface-alt);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--text-tertiary);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+}
+
+/* Remove rounded corners from all shadcn components */
+[class*="rounded"] {
+    border-radius: 0 !important;
+}
+
 @layer base {
     [data-debug-wrapper="true"] {
         display: contents !important;
-    }
-
-    [data-debug-wrapper="true"] > * {
-        margin-left: inherit;
-        margin-right: inherit;
-        margin-top: inherit;
-        margin-bottom: inherit;
-        padding-left: inherit;
-        padding-right: inherit;
-        padding-top: inherit;
-        padding-bottom: inherit;
-        column-gap: inherit;
-        row-gap: inherit;
-        gap: inherit;
-        border-left-width: inherit;
-        border-right-width: inherit;
-        border-top-width: inherit;
-        border-bottom-width: inherit;
-        border-left-style: inherit;
-        border-right-style: inherit;
-        border-top-style: inherit;
-        border-bottom-style: inherit;
-        border-left-color: inherit;
-        border-right-color: inherit;
-        border-top-color: inherit;
-        border-bottom-color: inherit;
     }
 }

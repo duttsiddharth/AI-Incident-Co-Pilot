@@ -1,34 +1,131 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* App-specific overrides and animations */
+
+/* Ensure no rounded corners anywhere */
+* {
+    border-radius: 0 !important;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
+/* ASCII spinner keyframes */
+@keyframes ascii-spin {
+    0% { content: '|'; }
+    25% { content: '/'; }
+    50% { content: '-'; }
+    75% { content: '\\'; }
+}
+
+/* Smooth scroll */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Focus visible for accessibility */
+:focus-visible {
+    outline: 2px solid #0B0C10;
+    outline-offset: 2px;
+}
+
+/* Selection color */
+::selection {
+    background-color: #0B0C10;
+    color: #F9FAFB;
+}
+
+/* Card shadow on hover */
+.card-hover:hover {
+    box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
+    border-color: #0B0C10 !important;
+    transform: translateY(-2px);
+}
+
+/* Terminal block styling */
+.terminal-block {
+    background: linear-gradient(180deg, #0B0C10 0%, #1a1b1f 100%);
+    font-variant-ligatures: none;
+}
+
+/* Animate confidence bar on load */
+@keyframes grow-width {
+    from { width: 0; }
+}
+
+.confidence-fill {
+    animation: grow-width 1s ease-out;
+}
+
+/* Loading card border animation */
+@keyframes border-pulse {
+    0%, 100% { 
+        border-color: rgba(0,0,0,0.2);
+    }
+    50% { 
+        border-color: rgba(0,0,0,0.8);
     }
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+.loading-card {
+    animation: border-pulse 1.5s ease-in-out infinite;
 }
 
-.App-link {
-    color: #61dafb;
+/* Textarea placeholder styling */
+.textarea-field::placeholder {
+    color: #9CA3AF;
+    font-size: 0.8rem;
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
+/* Button active states */
+.btn-primary:active,
+.btn-secondary:active {
+    transform: translateY(1px);
+}
+
+/* Disabled state improvements */
+.btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Badge pulse for critical */
+.badge-p1 {
+    animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+@keyframes pulse-subtle {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+}
+
+/* Header shadow on scroll - handled via JS if needed */
+header {
+    transition: box-shadow 0.2s ease;
+}
+
+/* Grid gap adjustments for mobile */
+@media (max-width: 1024px) {
+    .grid {
+        gap: 1rem;
     }
-    to {
-        transform: rotate(360deg);
+}
+
+/* Ensure monospace text doesn't wrap awkwardly */
+.font-mono {
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+/* Status indicator pulse */
+@keyframes status-pulse {
+    0%, 100% { 
+        opacity: 1;
+        transform: scale(1);
     }
+    50% { 
+        opacity: 0.5;
+        transform: scale(1.2);
+    }
+}
+
+/* Make the green status dot pulse */
+.animate-pulse {
+    animation: status-pulse 2s ease-in-out infinite;
 }
