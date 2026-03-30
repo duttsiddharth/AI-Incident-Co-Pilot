@@ -289,6 +289,60 @@ async def get_incidents(limit: int = 50, status: Optional[str] = None):
             incidents = [i for i in incidents if i.get('status') == status]
     return [calculate_sla_status(i) for i in incidents]
 
+@api_router.get("/incidents/search")
+async def search_incidents(
+    priority: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    page: int = 1,
+    limit: int = 20
+):
+    database = get_db()
+    skip = (page - 1) * limit
+
+    if database is not None:
+        query = {}
+        if priority:
+            query["priority"] = priority
+        if status:
+            query["status"] = status
+        if search:
+            query["summary"] = {"$regex": search, "$options": "i"}
+        if date_from or date_to:
+            date_q = {}
+            if date_from:
+                date_q["$gte"] = date_from
+            if date_to:
+                date_q["$lte"] = date_to + "T23:59:59"
+            query["created_at"] = date_q
+
+        total = await database.incidents.count_documents(query)
+        items = await database.incidents.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    else:
+        all_items = list(in_memory_incidents.values())
+        if priority:
+            all_items = [i for i in all_items if i.get("priority") == priority]
+        if status:
+            all_items = [i for i in all_items if i.get("status") == status]
+        if search:
+            all_items = [i for i in all_items if search.lower() in (i.get("summary", "") + i.get("ticket", "")).lower()]
+        if date_from:
+            all_items = [i for i in all_items if i.get("created_at", "") >= date_from]
+        if date_to:
+            all_items = [i for i in all_items if i.get("created_at", "") <= date_to + "T23:59:59"]
+        all_items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        total = len(all_items)
+        items = all_items[skip:skip + limit]
+
+    return {
+        "items": [calculate_sla_status(i) for i in items],
+        "total": total,
+        "page": page,
+        "pages": max(1, (total + limit - 1) // limit)
+    }
+
 @api_router.get("/incidents/{id}")
 async def get_incident(id: str):
     database = get_db()
@@ -417,6 +471,66 @@ async def run_sim():
         except Exception as e:
             logger.error(f"Sim error: {e}")
             await asyncio.sleep(5)
+
+@api_router.get("/trends")
+async def get_trends():
+    database = get_db()
+    incidents = await database.incidents.find({}, {"_id": 0}).to_list(5000) if database is not None else list(in_memory_incidents.values())
+
+    volume_by_date = {}
+    mttr_by_date = {}
+    priority_by_date = {}
+    summary_counts = {}
+
+    for inc in incidents:
+        created = inc.get("created_at", "")
+        if isinstance(created, str):
+            day = created[:10]
+        else:
+            day = created.isoformat()[:10]
+
+        volume_by_date[day] = volume_by_date.get(day, 0) + 1
+
+        p = inc.get("priority", "P3")
+        if day not in priority_by_date:
+            priority_by_date[day] = {"P1": 0, "P2": 0, "P3": 0}
+        priority_by_date[day][p] = priority_by_date[day].get(p, 0) + 1
+
+        if inc.get("status") == "RESOLVED" and inc.get("resolved_at"):
+            c = inc.get("created_at", "")
+            r = inc.get("resolved_at", "")
+            try:
+                if isinstance(c, str):
+                    c = datetime.fromisoformat(c.replace("Z", "+00:00"))
+                if isinstance(r, str):
+                    r = datetime.fromisoformat(r.replace("Z", "+00:00"))
+                mins = (r - c).total_seconds() / 60
+                if day not in mttr_by_date:
+                    mttr_by_date[day] = []
+                mttr_by_date[day].append(mins)
+            except Exception:
+                pass
+
+        words = inc.get("summary", "").lower()
+        for keyword in ["sip", "audio", "queue", "cpu", "dns", "registration", "routing", "firewall", "timeout", "memory"]:
+            if keyword in words:
+                summary_counts[keyword] = summary_counts.get(keyword, 0) + 1
+
+    sorted_dates = sorted(volume_by_date.keys())
+
+    volume_trend = [{"date": d, "count": volume_by_date[d]} for d in sorted_dates]
+    mttr_trend = [{"date": d, "mttr": round(sum(mttr_by_date[d]) / len(mttr_by_date[d]), 1)} for d in sorted_dates if d in mttr_by_date]
+    priority_trend = [{"date": d, **priority_by_date.get(d, {"P1": 0, "P2": 0, "P3": 0})} for d in sorted_dates]
+    recurring = sorted([{"pattern": k, "count": v} for k, v in summary_counts.items()], key=lambda x: x["count"], reverse=True)[:10]
+
+    return {
+        "volume_trend": volume_trend,
+        "mttr_trend": mttr_trend,
+        "priority_trend": priority_trend,
+        "recurring_patterns": recurring,
+        "total_incidents": len(incidents)
+    }
+
 
 @app.websocket("/ws/incidents")
 async def ws_endpoint(ws: WebSocket):

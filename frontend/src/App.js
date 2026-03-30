@@ -3,7 +3,6 @@ import "@/App.css";
 import axios from "axios";
 import { 
   Warning, 
-  CheckCircle, 
   Copy, 
   Lightning, 
   Cpu,
@@ -15,21 +14,27 @@ import {
   Play,
   Stop,
   ArrowClockwise,
-  CaretRight,
-  Check,
   X,
   Timer,
   TrendUp,
-  Users,
-  Gauge
+  FilePdf,
+  MagnifyingGlass,
+  Funnel,
+  CaretLeft,
+  CaretRight,
+  ClockCounterClockwise,
+  ChartLine
 } from "@phosphor-icons/react";
 import { Toaster, toast } from "sonner";
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { 
+  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, 
+  ResponsiveContainer, Legend, LineChart, Line, AreaChart, Area, CartesianGrid 
+} from "recharts";
+import { jsPDF } from "jspdf";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-// Sample tickets
 const SAMPLE_TICKETS = [
   {
     title: "SIP Registration Failure",
@@ -67,17 +72,106 @@ USER REPORTS: "Customer keeps saying hello but I can't hear them"`
   }
 ];
 
-const PRIORITY_COLORS = {
-  P1: "#E63946",
-  P2: "#F59E0B", 
-  P3: "#2563EB"
+const PRIORITY_COLORS = { P1: "#E63946", P2: "#F59E0B", P3: "#2563EB" };
+const STATUS_COLORS = { OPEN: "#E63946", IN_PROGRESS: "#F59E0B", RESOLVED: "#10B981" };
+
+// ── Shared badge components ──
+const PriorityBadge = ({ priority }) => {
+  const classes = {
+    P1: "bg-red-100 text-red-700 border-red-200",
+    P2: "bg-amber-100 text-amber-700 border-amber-200",
+    P3: "bg-blue-100 text-blue-700 border-blue-200"
+  };
+  const icons = { P1: <Lightning weight="fill" size={12} />, P2: <Warning weight="fill" size={12} />, P3: <Cpu size={12} /> };
+  return (
+    <span data-testid={`priority-badge-${priority}`} className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold border ${classes[priority]}`}>
+      {icons[priority]} {priority}
+    </span>
+  );
 };
 
-const STATUS_COLORS = {
-  OPEN: "#E63946",
-  IN_PROGRESS: "#F59E0B",
-  RESOLVED: "#10B981"
+const StatusBadge = ({ status }) => {
+  const classes = { OPEN: "bg-red-100 text-red-700", IN_PROGRESS: "bg-amber-100 text-amber-700", RESOLVED: "bg-green-100 text-green-700" };
+  return <span data-testid={`status-badge-${status}`} className={`px-2 py-0.5 text-xs font-bold ${classes[status]}`}>{status}</span>;
 };
+
+const ConfidenceBand = ({ band, score }) => {
+  const classes = { HIGH: "bg-green-100 text-green-700", MEDIUM: "bg-amber-100 text-amber-700", LOW: "bg-red-100 text-red-700" };
+  return <span className={`px-2 py-0.5 text-xs font-bold ${classes[band]}`}>{score}% ({band})</span>;
+};
+
+// ── PDF Export ──
+const exportIncidentPDF = (inc) => {
+  const doc = new jsPDF();
+  const margin = 20;
+  let y = margin;
+  const pw = doc.internal.pageSize.getWidth() - margin * 2;
+
+  doc.setFontSize(18);
+  doc.setFont("helvetica", "bold");
+  doc.text("AI Incident Co-Pilot Report", margin, y);
+  y += 10;
+
+  doc.setDrawColor(0);
+  doc.setLineWidth(0.5);
+  doc.line(margin, y, margin + pw, y);
+  y += 8;
+
+  const addSection = (label, value) => {
+    if (!value) return;
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(100);
+    doc.text(label, margin, y);
+    y += 5;
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(0);
+    const lines = doc.splitTextToSize(String(value), pw);
+    for (const line of lines) {
+      if (y > 270) { doc.addPage(); y = margin; }
+      doc.text(line, margin, y);
+      y += 5;
+    }
+    y += 4;
+  };
+
+  addSection("PRIORITY", `${inc.priority} | SLA Target: ${inc.sla_target_minutes} min | SLA Breached: ${inc.sla_breached ? "YES" : "NO"}`);
+  addSection("CONFIDENCE", `${inc.confidence_score}% (${inc.confidence_band})${inc.needs_human_review ? " - NEEDS HUMAN REVIEW" : ""}`);
+  addSection("SUMMARY", inc.summary);
+  addSection("ROOT CAUSE", inc.root_cause);
+  addSection("RESOLUTION STEPS", inc.resolution_steps);
+  if (inc.bridge_update && inc.bridge_update !== "N/A") addSection("BRIDGE UPDATE", inc.bridge_update);
+  if (inc.key_signals?.length) addSection("KEY SIGNALS", inc.key_signals.join(", "));
+  addSection("CREATED", inc.created_at);
+  addSection("TICKET", inc.ticket);
+
+  doc.save(`incident-${inc.id?.slice(0,8) || "report"}.pdf`);
+  toast.success("PDF exported");
+};
+
+// ── Helpers ──
+const formatTime = (minutes) => {
+  if (minutes === null || minutes === undefined) return "--";
+  const hrs = Math.floor(minutes / 60);
+  const mins = Math.floor(minutes % 60);
+  return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+};
+
+const getSLAColor = (remaining, breached) => {
+  if (breached) return "text-red-500";
+  if (remaining < 30) return "text-red-500";
+  if (remaining < 60) return "text-amber-500";
+  return "text-green-500";
+};
+
+const formatDate = (iso) => {
+  if (!iso) return "--";
+  try {
+    return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch { return iso; }
+};
+
 
 function App() {
   const [activeTab, setActiveTab] = useState("analyze");
@@ -94,7 +188,17 @@ function App() {
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState({});
 
-  // Fetch dashboard data
+  // History state
+  const [historyData, setHistoryData] = useState({ items: [], total: 0, page: 1, pages: 1 });
+  const [historyFilter, setHistoryFilter] = useState({ priority: "", status: "", search: "", date_from: "", date_to: "" });
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Trends state
+  const [trends, setTrends] = useState(null);
+  const [trendsLoading, setTrendsLoading] = useState(false);
+
+  // ── Dashboard fetch ──
   const fetchDashboard = useCallback(async () => {
     try {
       const [dashRes, incRes, simRes] = await Promise.all([
@@ -110,7 +214,6 @@ function App() {
     }
   }, []);
 
-  // Auto-refresh dashboard
   useEffect(() => {
     if (activeTab === "dashboard") {
       fetchDashboard();
@@ -119,24 +222,60 @@ function App() {
     }
   }, [activeTab, fetchDashboard]);
 
-  // Loading animation
+  // ── History fetch ──
+  const fetchHistory = useCallback(async (page = 1) => {
+    setHistoryLoading(true);
+    try {
+      const params = new URLSearchParams({ page, limit: 15 });
+      if (historyFilter.priority) params.append("priority", historyFilter.priority);
+      if (historyFilter.status) params.append("status", historyFilter.status);
+      if (historyFilter.search) params.append("search", historyFilter.search);
+      if (historyFilter.date_from) params.append("date_from", historyFilter.date_from);
+      if (historyFilter.date_to) params.append("date_to", historyFilter.date_to);
+      const res = await axios.get(`${API}/incidents/search?${params}`);
+      setHistoryData(res.data);
+      setHistoryPage(page);
+    } catch (error) {
+      console.error("History fetch error:", error);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [historyFilter]);
+
+  useEffect(() => {
+    if (activeTab === "history") fetchHistory(1);
+  }, [activeTab, fetchHistory]);
+
+  // ── Trends fetch ──
+  const fetchTrends = useCallback(async () => {
+    setTrendsLoading(true);
+    try {
+      const res = await axios.get(`${API}/trends`);
+      setTrends(res.data);
+    } catch (error) {
+      console.error("Trends fetch error:", error);
+    } finally {
+      setTrendsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "trends") fetchTrends();
+  }, [activeTab, fetchTrends]);
+
+  // ── Loading animation ──
   useEffect(() => {
     if (isAnalyzing) {
       const texts = ["ANALYZING...", "QUERYING RAG...", "COMPUTING...", "GENERATING..."];
       let i = 0;
-      const interval = setInterval(() => {
-        setLoadingText(texts[i % texts.length]);
-        i++;
-      }, 1500);
+      const interval = setInterval(() => { setLoadingText(texts[i % texts.length]); i++; }, 1500);
       return () => clearInterval(interval);
     }
   }, [isAnalyzing]);
 
+  // ── Actions ──
   const handleAnalyze = async () => {
-    if (!ticketText.trim()) {
-      toast.error("Please enter a ticket");
-      return;
-    }
+    if (!ticketText.trim()) { toast.error("Please enter a ticket"); return; }
     setIsAnalyzing(true);
     setResult(null);
     try {
@@ -170,9 +309,7 @@ function App() {
       await axios.patch(`${API}/incidents/${id}`, { status });
       toast.success(`Incident ${status.toLowerCase()}`);
       fetchDashboard();
-      if (selectedIncident?.id === id) {
-        setSelectedIncident({ ...selectedIncident, status });
-      }
+      if (selectedIncident?.id === id) setSelectedIncident({ ...selectedIncident, status });
     } catch (error) {
       toast.error("Update failed");
     }
@@ -189,63 +326,15 @@ function App() {
     }
   };
 
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    toast.success("Copied to clipboard");
-  };
+  const copyToClipboard = (text) => { navigator.clipboard.writeText(text); toast.success("Copied to clipboard"); };
 
-  const getSLAColor = (remaining, breached) => {
-    if (breached) return "text-red-500";
-    if (remaining < 30) return "text-red-500";
-    if (remaining < 60) return "text-amber-500";
-    return "text-green-500";
-  };
-
-  const formatTime = (minutes) => {
-    if (minutes === null || minutes === undefined) return "--";
-    const hrs = Math.floor(minutes / 60);
-    const mins = Math.floor(minutes % 60);
-    return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
-  };
-
-  // Priority badge component
-  const PriorityBadge = ({ priority }) => {
-    const classes = {
-      P1: "bg-red-100 text-red-700 border-red-200",
-      P2: "bg-amber-100 text-amber-700 border-amber-200",
-      P3: "bg-blue-100 text-blue-700 border-blue-200"
-    };
-    const icons = { P1: <Lightning weight="fill" size={12} />, P2: <Warning weight="fill" size={12} />, P3: <Cpu size={12} /> };
-    return (
-      <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold border ${classes[priority]}`}>
-        {icons[priority]} {priority}
-      </span>
-    );
-  };
-
-  // Status badge component
-  const StatusBadge = ({ status }) => {
-    const classes = {
-      OPEN: "bg-red-100 text-red-700",
-      IN_PROGRESS: "bg-amber-100 text-amber-700",
-      RESOLVED: "bg-green-100 text-green-700"
-    };
-    return <span className={`px-2 py-0.5 text-xs font-bold ${classes[status]}`}>{status}</span>;
-  };
-
-  // Confidence band badge
-  const ConfidenceBand = ({ band, score }) => {
-    const classes = {
-      HIGH: "bg-green-100 text-green-700",
-      MEDIUM: "bg-amber-100 text-amber-700",
-      LOW: "bg-red-100 text-red-700"
-    };
-    return (
-      <span className={`px-2 py-0.5 text-xs font-bold ${classes[band]}`}>
-        {score}% ({band})
-      </span>
-    );
-  };
+  // ── Tab config ──
+  const tabs = [
+    { id: "analyze", label: "ANALYZE" },
+    { id: "dashboard", label: "DASHBOARD" },
+    { id: "history", label: "HISTORY" },
+    { id: "trends", label: "TRENDS" }
+  ];
 
   return (
     <div className="min-h-screen bg-[#F8F9FA]">
@@ -265,28 +354,23 @@ function App() {
               </div>
             </div>
             
-            {/* Tabs */}
-            <div className="flex gap-1">
-              <button
-                onClick={() => setActiveTab("analyze")}
-                className={`px-4 py-2 text-sm font-bold transition-all ${activeTab === "analyze" ? "bg-black text-white" : "bg-gray-100 hover:bg-gray-200"}`}
-              >
-                ANALYZE
-              </button>
-              <button
-                onClick={() => setActiveTab("dashboard")}
-                className={`px-4 py-2 text-sm font-bold transition-all ${activeTab === "dashboard" ? "bg-black text-white" : "bg-gray-100 hover:bg-gray-200"}`}
-              >
-                DASHBOARD
-              </button>
+            <div className="flex gap-1" data-testid="nav-tabs">
+              {tabs.map(t => (
+                <button
+                  key={t.id}
+                  data-testid={`tab-${t.id}`}
+                  onClick={() => setActiveTab(t.id)}
+                  className={`px-4 py-2 text-sm font-bold transition-all ${activeTab === t.id ? "bg-black text-white" : "bg-gray-100 hover:bg-gray-200"}`}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
 
-            {/* Simulation Toggle */}
             <button
+              data-testid="simulation-toggle"
               onClick={toggleSimulation}
-              className={`flex items-center gap-2 px-4 py-2 text-sm font-bold transition-all ${
-                simulationRunning ? "bg-red-500 text-white" : "bg-green-500 text-white"
-              }`}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-bold transition-all ${simulationRunning ? "bg-red-500 text-white" : "bg-green-500 text-white"}`}
             >
               {simulationRunning ? <Stop weight="fill" size={16} /> : <Play weight="fill" size={16} />}
               {simulationRunning ? "STOP SIM" : "START SIM"}
@@ -295,13 +379,11 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-[1800px] mx-auto p-4">
         
-        {/* ANALYZE TAB */}
+        {/* ═══════════ ANALYZE TAB ═══════════ */}
         {activeTab === "analyze" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left - Input */}
             <div className="lg:col-span-4 space-y-4">
               <div className="bg-white border border-black/10 p-4">
                 <div className="flex justify-between mb-2">
@@ -309,6 +391,7 @@ function App() {
                   <span className="text-xs font-mono text-gray-400">{ticketText.length} chars</span>
                 </div>
                 <textarea
+                  data-testid="ticket-textarea"
                   className="w-full h-64 p-3 border border-black/20 font-mono text-sm resize-none focus:border-black focus:ring-1 focus:ring-black outline-none"
                   placeholder="Paste incident ticket here..."
                   value={ticketText}
@@ -316,6 +399,7 @@ function App() {
                   disabled={isAnalyzing}
                 />
                 <button
+                  data-testid="analyze-button"
                   onClick={handleAnalyze}
                   disabled={isAnalyzing || !ticketText.trim()}
                   className="w-full mt-3 bg-black text-white py-3 font-bold disabled:opacity-50 flex items-center justify-center gap-2"
@@ -324,14 +408,12 @@ function App() {
                 </button>
               </div>
               
-              {/* Sample Tickets */}
               <div className="bg-white border border-black/10 p-4">
                 <span className="text-xs font-mono text-gray-400 block mb-3">SAMPLE TICKETS</span>
                 {SAMPLE_TICKETS.map((s, i) => (
-                  <button
-                    key={i}
-                    onClick={() => { setTicketText(s.ticket); setResult(null); }}
+                  <button key={i} onClick={() => { setTicketText(s.ticket); setResult(null); }}
                     className="w-full text-left px-3 py-2 mb-2 border border-black/10 hover:border-black text-sm flex items-center gap-2"
+                    data-testid={`sample-ticket-${i}`}
                   >
                     <Clipboard size={14} /> {s.title}
                   </button>
@@ -339,7 +421,6 @@ function App() {
               </div>
             </div>
 
-            {/* Right - Results */}
             <div className="lg:col-span-8 space-y-4">
               {isAnalyzing ? (
                 <div className="bg-white border-2 border-black/20 p-12 flex flex-col items-center animate-pulse">
@@ -348,7 +429,6 @@ function App() {
                 </div>
               ) : result ? (
                 <>
-                  {/* Priority & Confidence */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-white border border-black/10 p-4">
                       <span className="text-xs font-mono text-gray-400 block mb-2">PRIORITY</span>
@@ -358,13 +438,10 @@ function App() {
                     <div className="bg-white border border-black/10 p-4">
                       <span className="text-xs font-mono text-gray-400 block mb-2">CONFIDENCE</span>
                       <ConfidenceBand band={result.confidence_band} score={result.confidence_score} />
-                      {result.needs_human_review && (
-                        <p className="text-xs mt-2 text-amber-600 font-bold">⚠ NEEDS HUMAN REVIEW</p>
-                      )}
+                      {result.needs_human_review && <p className="text-xs mt-2 text-amber-600 font-bold">NEEDS HUMAN REVIEW</p>}
                     </div>
                   </div>
 
-                  {/* Key Signals */}
                   {result.key_signals?.length > 0 && (
                     <div className="bg-white border border-black/10 p-4">
                       <span className="text-xs font-mono text-gray-400 block mb-2">KEY SIGNALS DETECTED</span>
@@ -376,13 +453,11 @@ function App() {
                     </div>
                   )}
 
-                  {/* Summary */}
                   <div className="bg-white border border-black/10 p-4">
                     <span className="text-xs font-mono text-gray-400 block mb-2">SUMMARY</span>
                     <p>{result.summary}</p>
                   </div>
 
-                  {/* Root Cause & Resolution */}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-white border border-black/10 p-4">
                       <span className="text-xs font-mono text-gray-400 block mb-2">ROOT CAUSE</span>
@@ -399,7 +474,6 @@ function App() {
                     </div>
                   </div>
 
-                  {/* Bridge Update */}
                   {result.priority === "P1" && result.bridge_update !== "N/A" && (
                     <div className="bg-black text-white p-4">
                       <div className="flex justify-between mb-2">
@@ -411,6 +485,15 @@ function App() {
                       <p className="font-mono text-sm whitespace-pre-wrap">{result.bridge_update}</p>
                     </div>
                   )}
+
+                  {/* Export PDF button */}
+                  <button
+                    data-testid="export-pdf-analyze"
+                    onClick={() => exportIncidentPDF(result)}
+                    className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-bold hover:bg-black transition-colors"
+                  >
+                    <FilePdf size={16} weight="fill" /> EXPORT PDF
+                  </button>
                 </>
               ) : (
                 <div className="bg-white border-2 border-dashed border-black/20 p-12 flex flex-col items-center text-gray-400">
@@ -423,71 +506,40 @@ function App() {
           </div>
         )}
 
-        {/* DASHBOARD TAB */}
+        {/* ═══════════ DASHBOARD TAB ═══════════ */}
         {activeTab === "dashboard" && dashboard && (
-          <div className="space-y-6">
-            {/* KPI Cards */}
+          <div className="space-y-6" data-testid="dashboard-tab">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-white border border-black/10 p-4">
-                <div className="flex items-center gap-2 text-gray-400 mb-1">
-                  <ChartPie size={16} />
-                  <span className="text-xs font-mono">TOTAL INCIDENTS</span>
+              {[
+                { icon: <ChartPie size={16} />, label: "TOTAL INCIDENTS", value: dashboard.total_incidents, color: "" },
+                { icon: <Timer size={16} />, label: "ACTIVE", value: dashboard.active_incidents, color: "text-amber-500" },
+                { icon: <Warning size={16} />, label: "SLA BREACHED", value: `${dashboard.breach_percentage}%`, color: "text-red-500" },
+                { icon: <Clock size={16} />, label: "AVG RESOLUTION", value: formatTime(dashboard.avg_resolution_minutes), color: "" }
+              ].map((kpi, i) => (
+                <div key={i} className="bg-white border border-black/10 p-4">
+                  <div className="flex items-center gap-2 text-gray-400 mb-1">{kpi.icon}<span className="text-xs font-mono">{kpi.label}</span></div>
+                  <p className={`text-3xl font-black ${kpi.color}`}>{kpi.value}</p>
                 </div>
-                <p className="text-3xl font-black">{dashboard.total_incidents}</p>
-              </div>
-              <div className="bg-white border border-black/10 p-4">
-                <div className="flex items-center gap-2 text-gray-400 mb-1">
-                  <Timer size={16} />
-                  <span className="text-xs font-mono">ACTIVE</span>
-                </div>
-                <p className="text-3xl font-black text-amber-500">{dashboard.active_incidents}</p>
-              </div>
-              <div className="bg-white border border-black/10 p-4">
-                <div className="flex items-center gap-2 text-gray-400 mb-1">
-                  <Warning size={16} />
-                  <span className="text-xs font-mono">SLA BREACHED</span>
-                </div>
-                <p className="text-3xl font-black text-red-500">{dashboard.breach_percentage}%</p>
-              </div>
-              <div className="bg-white border border-black/10 p-4">
-                <div className="flex items-center gap-2 text-gray-400 mb-1">
-                  <Clock size={16} />
-                  <span className="text-xs font-mono">AVG RESOLUTION</span>
-                </div>
-                <p className="text-3xl font-black">{formatTime(dashboard.avg_resolution_minutes)}</p>
-              </div>
+              ))}
             </div>
 
-            {/* Charts Row */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Priority Pie Chart */}
               <div className="bg-white border border-black/10 p-4">
                 <span className="text-xs font-mono text-gray-400 block mb-4">PRIORITY DISTRIBUTION</span>
                 <ResponsiveContainer width="100%" height={200}>
                   <PieChart>
-                    <Pie
-                      data={[
-                        { name: "P1", value: dashboard.priority_breakdown.P1 },
-                        { name: "P2", value: dashboard.priority_breakdown.P2 },
-                        { name: "P3", value: dashboard.priority_breakdown.P3 }
-                      ]}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={40}
-                      outerRadius={80}
-                      dataKey="value"
-                      label={({ name, value }) => `${name}: ${value}`}
-                    >
-                      <Cell fill={PRIORITY_COLORS.P1} />
-                      <Cell fill={PRIORITY_COLORS.P2} />
-                      <Cell fill={PRIORITY_COLORS.P3} />
+                    <Pie data={[
+                      { name: "P1", value: dashboard.priority_breakdown.P1 },
+                      { name: "P2", value: dashboard.priority_breakdown.P2 },
+                      { name: "P3", value: dashboard.priority_breakdown.P3 }
+                    ]} cx="50%" cy="50%" innerRadius={40} outerRadius={80} dataKey="value"
+                      label={({ name, value }) => `${name}: ${value}`}>
+                      <Cell fill={PRIORITY_COLORS.P1} /><Cell fill={PRIORITY_COLORS.P2} /><Cell fill={PRIORITY_COLORS.P3} />
                     </Pie>
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-
-              {/* Status Bar Chart */}
               <div className="bg-white border border-black/10 p-4">
                 <span className="text-xs font-mono text-gray-400 block mb-4">STATUS BREAKDOWN</span>
                 <ResponsiveContainer width="100%" height={200}>
@@ -496,22 +548,17 @@ function App() {
                     { name: "IN_PROGRESS", value: dashboard.status_breakdown.IN_PROGRESS, fill: STATUS_COLORS.IN_PROGRESS },
                     { name: "RESOLVED", value: dashboard.status_breakdown.RESOLVED, fill: STATUS_COLORS.RESOLVED }
                   ]}>
-                    <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                    <YAxis />
-                    <Tooltip />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} /><YAxis /><Tooltip />
                     <Bar dataKey="value" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
-            {/* Incidents Table */}
             <div className="bg-white border border-black/10">
               <div className="flex justify-between items-center p-4 border-b border-black/10">
                 <span className="text-xs font-mono text-gray-400">RECENT INCIDENTS</span>
-                <button onClick={fetchDashboard} className="text-xs flex items-center gap-1 text-blue-600">
-                  <ArrowClockwise size={12} /> Refresh
-                </button>
+                <button onClick={fetchDashboard} className="text-xs flex items-center gap-1 text-blue-600"><ArrowClockwise size={12} /> Refresh</button>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -528,9 +575,7 @@ function App() {
                     {incidents.map((inc) => (
                       <tr key={inc.id} className="border-t border-black/5 hover:bg-gray-50">
                         <td className="p-3 max-w-xs truncate">
-                          <button onClick={() => setSelectedIncident(inc)} className="text-left hover:underline">
-                            {inc.summary?.slice(0, 60)}...
-                          </button>
+                          <button onClick={() => setSelectedIncident(inc)} className="text-left hover:underline">{inc.summary?.slice(0, 60)}...</button>
                         </td>
                         <td className="p-3"><PriorityBadge priority={inc.priority} /></td>
                         <td className="p-3"><StatusBadge status={inc.status} /></td>
@@ -538,24 +583,15 @@ function App() {
                           {inc.sla_breached ? "BREACHED" : formatTime(inc.sla_remaining_minutes)}
                         </td>
                         <td className="p-3">
-                          {inc.status !== "RESOLVED" && (
-                            <div className="flex gap-1">
-                              {inc.status === "OPEN" && (
-                                <button
-                                  onClick={() => updateIncidentStatus(inc.id, "IN_PROGRESS")}
-                                  className="px-2 py-1 bg-amber-100 text-amber-700 text-xs"
-                                >
-                                  Start
-                                </button>
-                              )}
-                              <button
-                                onClick={() => updateIncidentStatus(inc.id, "RESOLVED")}
-                                className="px-2 py-1 bg-green-100 text-green-700 text-xs"
-                              >
-                                Resolve
-                              </button>
-                            </div>
-                          )}
+                          <div className="flex gap-1">
+                            {inc.status === "OPEN" && (
+                              <button onClick={() => updateIncidentStatus(inc.id, "IN_PROGRESS")} className="px-2 py-1 bg-amber-100 text-amber-700 text-xs">Start</button>
+                            )}
+                            {inc.status !== "RESOLVED" && (
+                              <button onClick={() => updateIncidentStatus(inc.id, "RESOLVED")} className="px-2 py-1 bg-green-100 text-green-700 text-xs">Resolve</button>
+                            )}
+                            <button onClick={() => exportIncidentPDF(inc)} className="px-2 py-1 bg-gray-100 text-gray-600 text-xs" title="Export PDF"><FilePdf size={12} weight="fill" /></button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -563,102 +599,324 @@ function App() {
                 </table>
               </div>
             </div>
+          </div>
+        )}
 
-            {/* Incident Detail Modal */}
-            {selectedIncident && (
-              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                  <div className="flex justify-between items-center p-4 border-b sticky top-0 bg-white">
-                    <h2 className="font-bold">Incident Details</h2>
-                    <button onClick={() => { setSelectedIncident(null); setEditMode(false); }}>
-                      <X size={20} />
-                    </button>
-                  </div>
-                  <div className="p-4 space-y-4">
-                    <div className="flex gap-2">
-                      <PriorityBadge priority={selectedIncident.priority} />
-                      <StatusBadge status={selectedIncident.status} />
-                      <ConfidenceBand band={selectedIncident.confidence_band} score={selectedIncident.confidence_score} />
-                    </div>
-                    
-                    {editMode ? (
-                      <>
-                        <div>
-                          <label className="text-xs font-mono text-gray-400 block mb-1">SUMMARY</label>
-                          <textarea
-                            className="w-full p-2 border text-sm"
-                            defaultValue={selectedIncident.summary}
-                            onChange={(e) => setEditData({ ...editData, summary: e.target.value })}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs font-mono text-gray-400 block mb-1">ROOT CAUSE</label>
-                          <textarea
-                            className="w-full p-2 border text-sm"
-                            defaultValue={selectedIncident.root_cause}
-                            onChange={(e) => setEditData({ ...editData, root_cause: e.target.value })}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs font-mono text-gray-400 block mb-1">RESOLUTION STEPS</label>
-                          <textarea
-                            className="w-full p-2 border text-sm h-32"
-                            defaultValue={selectedIncident.resolution_steps}
-                            onChange={(e) => setEditData({ ...editData, resolution_steps: e.target.value })}
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={saveIncidentEdit} className="px-4 py-2 bg-black text-white text-sm">Save</button>
-                          <button onClick={() => setEditMode(false)} className="px-4 py-2 border text-sm">Cancel</button>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div>
-                          <span className="text-xs font-mono text-gray-400 block mb-1">SUMMARY</span>
-                          <p>{selectedIncident.summary}</p>
-                        </div>
-                        <div>
-                          <span className="text-xs font-mono text-gray-400 block mb-1">ROOT CAUSE</span>
-                          <p>{selectedIncident.root_cause}</p>
-                        </div>
-                        <div>
-                          <span className="text-xs font-mono text-gray-400 block mb-1">RESOLUTION STEPS</span>
-                          <p className="whitespace-pre-wrap">{selectedIncident.resolution_steps}</p>
-                        </div>
-                        {selectedIncident.key_signals?.length > 0 && (
-                          <div>
-                            <span className="text-xs font-mono text-gray-400 block mb-1">KEY SIGNALS</span>
-                            <div className="flex flex-wrap gap-1">
-                              {selectedIncident.key_signals.map((s, i) => (
-                                <span key={i} className="px-2 py-0.5 bg-gray-100 text-xs">{s}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        <div className="flex gap-2 pt-4 border-t">
-                          <button onClick={() => setEditMode(true)} className="px-4 py-2 border text-sm">Edit</button>
-                          <button onClick={() => copyToClipboard(selectedIncident.resolution_steps)} className="px-4 py-2 border text-sm flex items-center gap-1">
-                            <Copy size={14} /> Copy Resolution
-                          </button>
-                          {selectedIncident.status !== "RESOLVED" && (
-                            <button
-                              onClick={() => updateIncidentStatus(selectedIncident.id, "RESOLVED")}
-                              className="px-4 py-2 bg-green-500 text-white text-sm"
-                            >
-                              Resolve
-                            </button>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
+        {/* ═══════════ HISTORY TAB ═══════════ */}
+        {activeTab === "history" && (
+          <div className="space-y-4" data-testid="history-tab">
+            {/* Filters */}
+            <div className="bg-white border border-black/10 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Funnel size={16} className="text-gray-400" />
+                <span className="text-xs font-mono text-gray-400">FILTERS</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                <div className="relative">
+                  <MagnifyingGlass size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
+                  <input
+                    data-testid="history-search"
+                    type="text"
+                    placeholder="Search summaries..."
+                    className="w-full pl-8 pr-3 py-2 border border-black/15 text-sm focus:border-black outline-none"
+                    value={historyFilter.search}
+                    onChange={(e) => setHistoryFilter({ ...historyFilter, search: e.target.value })}
+                  />
+                </div>
+                <select
+                  data-testid="history-priority-filter"
+                  className="border border-black/15 px-3 py-2 text-sm focus:border-black outline-none"
+                  value={historyFilter.priority}
+                  onChange={(e) => setHistoryFilter({ ...historyFilter, priority: e.target.value })}
+                >
+                  <option value="">All Priorities</option>
+                  <option value="P1">P1 - Critical</option>
+                  <option value="P2">P2 - High</option>
+                  <option value="P3">P3 - Minor</option>
+                </select>
+                <select
+                  data-testid="history-status-filter"
+                  className="border border-black/15 px-3 py-2 text-sm focus:border-black outline-none"
+                  value={historyFilter.status}
+                  onChange={(e) => setHistoryFilter({ ...historyFilter, status: e.target.value })}
+                >
+                  <option value="">All Statuses</option>
+                  <option value="OPEN">Open</option>
+                  <option value="IN_PROGRESS">In Progress</option>
+                  <option value="RESOLVED">Resolved</option>
+                </select>
+                <input
+                  data-testid="history-date-from"
+                  type="date"
+                  className="border border-black/15 px-3 py-2 text-sm focus:border-black outline-none"
+                  value={historyFilter.date_from}
+                  onChange={(e) => setHistoryFilter({ ...historyFilter, date_from: e.target.value })}
+                />
+                <input
+                  data-testid="history-date-to"
+                  type="date"
+                  className="border border-black/15 px-3 py-2 text-sm focus:border-black outline-none"
+                  value={historyFilter.date_to}
+                  onChange={(e) => setHistoryFilter({ ...historyFilter, date_to: e.target.value })}
+                />
+                <button
+                  data-testid="history-apply-filters"
+                  onClick={() => fetchHistory(1)}
+                  className="bg-black text-white text-sm font-bold px-4 py-2 flex items-center justify-center gap-2"
+                >
+                  <MagnifyingGlass size={14} /> SEARCH
+                </button>
+              </div>
+            </div>
+
+            {/* Results */}
+            <div className="bg-white border border-black/10">
+              <div className="flex justify-between items-center p-4 border-b border-black/10">
+                <div className="flex items-center gap-3">
+                  <ClockCounterClockwise size={16} className="text-gray-400" />
+                  <span className="text-xs font-mono text-gray-400">ANALYSIS HISTORY</span>
+                  <span className="text-xs font-mono bg-gray-100 px-2 py-0.5">{historyData.total} results</span>
                 </div>
               </div>
+
+              {historyLoading ? (
+                <div className="p-12 text-center text-gray-400 animate-pulse"><Cpu size={32} className="mx-auto mb-2" />Loading...</div>
+              ) : historyData.items.length === 0 ? (
+                <div className="p-12 text-center text-gray-400">
+                  <ClockCounterClockwise size={32} className="mx-auto mb-2" />
+                  <p className="font-bold">No incidents found</p>
+                  <p className="text-sm">Adjust your filters or analyze some tickets first</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 text-xs font-mono text-gray-500">
+                      <tr>
+                        <th className="p-3 text-left">DATE</th>
+                        <th className="p-3 text-left">SUMMARY</th>
+                        <th className="p-3 text-left">PRIORITY</th>
+                        <th className="p-3 text-left">STATUS</th>
+                        <th className="p-3 text-left">CONFIDENCE</th>
+                        <th className="p-3 text-left">SLA</th>
+                        <th className="p-3 text-left">ACTIONS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historyData.items.map((inc) => (
+                        <tr key={inc.id} className="border-t border-black/5 hover:bg-gray-50">
+                          <td className="p-3 text-xs font-mono text-gray-500 whitespace-nowrap">{formatDate(inc.created_at)}</td>
+                          <td className="p-3 max-w-xs">
+                            <button onClick={() => setSelectedIncident(inc)} className="text-left hover:underline truncate block max-w-[300px]">
+                              {inc.summary?.slice(0, 80)}
+                            </button>
+                          </td>
+                          <td className="p-3"><PriorityBadge priority={inc.priority} /></td>
+                          <td className="p-3"><StatusBadge status={inc.status} /></td>
+                          <td className="p-3">
+                            {inc.confidence_band && <ConfidenceBand band={inc.confidence_band} score={inc.confidence_score} />}
+                          </td>
+                          <td className={`p-3 font-mono text-xs ${getSLAColor(inc.sla_remaining_minutes, inc.sla_breached)}`}>
+                            {inc.sla_breached ? "BREACHED" : formatTime(inc.sla_remaining_minutes)}
+                          </td>
+                          <td className="p-3">
+                            <button onClick={() => exportIncidentPDF(inc)} className="px-2 py-1 bg-gray-100 text-gray-600 text-xs flex items-center gap-1 hover:bg-gray-200" data-testid={`pdf-export-${inc.id}`}>
+                              <FilePdf size={12} weight="fill" /> PDF
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Pagination */}
+              {historyData.pages > 1 && (
+                <div className="flex items-center justify-between p-4 border-t border-black/10">
+                  <span className="text-xs font-mono text-gray-400">Page {historyData.page} of {historyData.pages}</span>
+                  <div className="flex gap-2">
+                    <button
+                      data-testid="history-prev-page"
+                      onClick={() => fetchHistory(historyPage - 1)}
+                      disabled={historyPage <= 1}
+                      className="px-3 py-1 border border-black/15 text-sm disabled:opacity-30 flex items-center gap-1 hover:bg-gray-50"
+                    >
+                      <CaretLeft size={12} /> Prev
+                    </button>
+                    <button
+                      data-testid="history-next-page"
+                      onClick={() => fetchHistory(historyPage + 1)}
+                      disabled={historyPage >= historyData.pages}
+                      className="px-3 py-1 border border-black/15 text-sm disabled:opacity-30 flex items-center gap-1 hover:bg-gray-50"
+                    >
+                      Next <CaretRight size={12} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ═══════════ TRENDS TAB ═══════════ */}
+        {activeTab === "trends" && (
+          <div className="space-y-6" data-testid="trends-tab">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ChartLine size={20} className="text-gray-500" />
+                <span className="text-xs font-mono text-gray-400">TRENDS & ANALYTICS</span>
+                {trends && <span className="text-xs font-mono bg-gray-100 px-2 py-0.5">{trends.total_incidents} total incidents</span>}
+              </div>
+              <button onClick={fetchTrends} className="text-xs flex items-center gap-1 text-blue-600"><ArrowClockwise size={12} /> Refresh</button>
+            </div>
+
+            {trendsLoading ? (
+              <div className="bg-white border border-black/10 p-12 text-center text-gray-400 animate-pulse"><Cpu size={32} className="mx-auto mb-2" />Loading trends...</div>
+            ) : !trends || trends.total_incidents === 0 ? (
+              <div className="bg-white border-2 border-dashed border-black/20 p-12 text-center text-gray-400">
+                <TrendUp size={48} className="mx-auto mb-4" />
+                <p className="font-bold">No trend data yet</p>
+                <p className="text-sm">Analyze some tickets or start the simulation to generate data</p>
+              </div>
+            ) : (
+              <>
+                {/* Volume Over Time */}
+                <div className="bg-white border border-black/10 p-4">
+                  <span className="text-xs font-mono text-gray-400 block mb-4">INCIDENT VOLUME OVER TIME</span>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <AreaChart data={trends.volume_trend}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                      <YAxis allowDecimals={false} />
+                      <Tooltip />
+                      <Area type="monotone" dataKey="count" stroke="#111" fill="#111" fillOpacity={0.1} strokeWidth={2} name="Incidents" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* MTTR Trend */}
+                  <div className="bg-white border border-black/10 p-4">
+                    <span className="text-xs font-mono text-gray-400 block mb-4">MTTR (MEAN TIME TO RESOLUTION)</span>
+                    {trends.mttr_trend.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={220}>
+                        <BarChart data={trends.mttr_trend}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                          <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                          <YAxis unit="m" />
+                          <Tooltip formatter={(v) => [`${v} min`, "MTTR"]} />
+                          <Bar dataKey="mttr" fill="#2563EB" radius={[4, 4, 0, 0]} name="MTTR (min)" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="h-[220px] flex items-center justify-center text-gray-400 text-sm">No resolved incidents yet</div>
+                    )}
+                  </div>
+
+                  {/* Priority Trend */}
+                  <div className="bg-white border border-black/10 p-4">
+                    <span className="text-xs font-mono text-gray-400 block mb-4">PRIORITY DISTRIBUTION OVER TIME</span>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <AreaChart data={trends.priority_trend}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                        <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                        <YAxis allowDecimals={false} />
+                        <Tooltip />
+                        <Area type="monotone" dataKey="P1" stackId="1" stroke={PRIORITY_COLORS.P1} fill={PRIORITY_COLORS.P1} fillOpacity={0.6} />
+                        <Area type="monotone" dataKey="P2" stackId="1" stroke={PRIORITY_COLORS.P2} fill={PRIORITY_COLORS.P2} fillOpacity={0.6} />
+                        <Area type="monotone" dataKey="P3" stackId="1" stroke={PRIORITY_COLORS.P3} fill={PRIORITY_COLORS.P3} fillOpacity={0.6} />
+                        <Legend />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Recurring Patterns */}
+                <div className="bg-white border border-black/10 p-4">
+                  <span className="text-xs font-mono text-gray-400 block mb-4">RECURRING ISSUE PATTERNS</span>
+                  {trends.recurring_patterns.length > 0 ? (
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      {trends.recurring_patterns.map((p, i) => (
+                        <div key={i} className="border border-black/10 p-3 text-center">
+                          <p className="text-2xl font-black">{p.count}</p>
+                          <p className="text-xs font-mono text-gray-500 uppercase mt-1">{p.pattern}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-400">No recurring patterns detected yet</p>
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}
       </main>
+
+      {/* ═══════════ INCIDENT DETAIL MODAL ═══════════ */}
+      {selectedIncident && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" data-testid="incident-detail-modal">
+          <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center p-4 border-b sticky top-0 bg-white">
+              <h2 className="font-bold">Incident Details</h2>
+              <button data-testid="close-modal" onClick={() => { setSelectedIncident(null); setEditMode(false); }}><X size={20} /></button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="flex gap-2 flex-wrap">
+                <PriorityBadge priority={selectedIncident.priority} />
+                <StatusBadge status={selectedIncident.status} />
+                {selectedIncident.confidence_band && <ConfidenceBand band={selectedIncident.confidence_band} score={selectedIncident.confidence_score} />}
+              </div>
+              
+              {editMode ? (
+                <>
+                  <div>
+                    <label className="text-xs font-mono text-gray-400 block mb-1">SUMMARY</label>
+                    <textarea className="w-full p-2 border text-sm" defaultValue={selectedIncident.summary}
+                      onChange={(e) => setEditData({ ...editData, summary: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-mono text-gray-400 block mb-1">ROOT CAUSE</label>
+                    <textarea className="w-full p-2 border text-sm" defaultValue={selectedIncident.root_cause}
+                      onChange={(e) => setEditData({ ...editData, root_cause: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-mono text-gray-400 block mb-1">RESOLUTION STEPS</label>
+                    <textarea className="w-full p-2 border text-sm h-32" defaultValue={selectedIncident.resolution_steps}
+                      onChange={(e) => setEditData({ ...editData, resolution_steps: e.target.value })} />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={saveIncidentEdit} className="px-4 py-2 bg-black text-white text-sm">Save</button>
+                    <button onClick={() => setEditMode(false)} className="px-4 py-2 border text-sm">Cancel</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div><span className="text-xs font-mono text-gray-400 block mb-1">SUMMARY</span><p>{selectedIncident.summary}</p></div>
+                  <div><span className="text-xs font-mono text-gray-400 block mb-1">ROOT CAUSE</span><p>{selectedIncident.root_cause}</p></div>
+                  <div><span className="text-xs font-mono text-gray-400 block mb-1">RESOLUTION STEPS</span><p className="whitespace-pre-wrap">{selectedIncident.resolution_steps}</p></div>
+                  {selectedIncident.key_signals?.length > 0 && (
+                    <div>
+                      <span className="text-xs font-mono text-gray-400 block mb-1">KEY SIGNALS</span>
+                      <div className="flex flex-wrap gap-1">
+                        {selectedIncident.key_signals.map((s, i) => <span key={i} className="px-2 py-0.5 bg-gray-100 text-xs">{s}</span>)}
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex gap-2 pt-4 border-t flex-wrap">
+                    <button onClick={() => setEditMode(true)} className="px-4 py-2 border text-sm">Edit</button>
+                    <button onClick={() => copyToClipboard(selectedIncident.resolution_steps)} className="px-4 py-2 border text-sm flex items-center gap-1"><Copy size={14} /> Copy Resolution</button>
+                    <button data-testid="modal-export-pdf" onClick={() => exportIncidentPDF(selectedIncident)} className="px-4 py-2 border text-sm flex items-center gap-1"><FilePdf size={14} weight="fill" /> Export PDF</button>
+                    {selectedIncident.status !== "RESOLVED" && (
+                      <button onClick={() => updateIncidentStatus(selectedIncident.id, "RESOLVED")} className="px-4 py-2 bg-green-500 text-white text-sm">Resolve</button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-black/10 mt-12 py-4">
