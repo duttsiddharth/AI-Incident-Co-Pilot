@@ -1,427 +1,43 @@
-# AI Incident Co-Pilot - Complete Project Code
-
-## Project Overview
-
-**Purpose:** AI-powered IT incident ticket analysis system using RAG (Retrieval Augmented Generation)
-
-**Tech Stack:**
-- Backend: FastAPI (Python)
-- Frontend: React + Tailwind CSS
-- Database: MongoDB
-- AI: OpenAI GPT-4o-mini
-- RAG: LlamaIndex + FAISS + HuggingFace embeddings
-
-**Features:**
-- Analyze IT incident tickets with AI
-- Auto-classify priority (P1/P2/P3)
-- Generate root cause analysis
-- Retrieve resolution steps from runbooks (RAG)
-- Generate P1 bridge communications
-- Confidence score with human review flag
+# AI Incident Co-Pilot Enterprise v2.0 — End-to-End Code Reference
+## Complete File Listing for GitHub Deployment
 
 ---
 
-## File Structure
+## PROJECT STRUCTURE
 
 ```
-ai-incident-copilot/
+AI-Incident-Co-Pilot/
 ├── backend/
-│   ├── server.py
-│   ├── rag_service.py
-│   ├── requirements.txt
-│   └── runbooks/ (5 markdown files)
+│   ├── server.py              # Main FastAPI app (all API routes)
+│   ├── rag_service.py         # BM25 RAG service (lightweight)
+│   ├── requirements.txt       # Python dependencies (Render-safe)
+│   ├── Procfile               # Render start command
+│   ├── build.sh               # Render build script
+│   ├── Dockerfile             # Docker support
+│   ├── .env.example           # Environment variable template
+│   └── runbooks/
+│       ├── sip_failures.md
+│       ├── contact_center_issues.md
+│       ├── network_infrastructure.md
+│       ├── server_infrastructure.md
+│       └── voip_quality.md
 ├── frontend/
-│   ├── src/App.js
-│   ├── src/App.css
-│   ├── src/index.css
-│   └── package.json
-└── README.md
+│   ├── package.json
+│   ├── yarn.lock
+│   ├── build.sh               # Render build script
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   └── src/
+│       ├── App.js             # Main React app (all 4 tabs)
+│       ├── App.css            # Custom styles
+│       └── index.css          # Tailwind + typography
+├── render.yaml                # Render deployment config
+└── docker-compose.yml         # Docker Compose for local dev
 ```
 
 ---
 
-## BACKEND CODE
-
-### backend/server.py
-
-```python
-from fastapi import FastAPI, APIRouter, HTTPException
-from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
-from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
-import uuid
-from datetime import datetime, timezone
-import json
-import asyncio
-
-# Load environment variables first
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
-
-# Configure logging (console only for cloud deployment)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# MongoDB connection
-mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ.get('DB_NAME', 'incident_copilot')]
-
-# Create the main app
-app = FastAPI(title="AI Incident Co-Pilot", version="1.0.0")
-
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
-
-# Initialize RAG service
-from rag_service import RAGService
-rag_service = RAGService()
-
-# Pydantic Models
-class TicketInput(BaseModel):
-    ticket: str
-
-class AnalysisResult(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    ticket: str
-    summary: str
-    priority: str
-    root_cause: str
-    resolution_steps: str
-    bridge_update: str
-    confidence_score: int
-    needs_human_review: bool
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-class AnalysisLog(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    ticket_input: str
-    gpt_response: Optional[str] = None
-    error: Optional[str] = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-# Routes
-@api_router.get("/")
-async def root():
-    return {"message": "AI Incident Co-Pilot API", "status": "healthy"}
-
-@api_router.get("/health")
-async def health_check():
-    return {"status": "healthy", "rag_loaded": rag_service.is_loaded}
-
-@api_router.post("/analyze", response_model=AnalysisResult)
-async def analyze_ticket(input: TicketInput):
-    """Analyze an IT incident ticket using AI and RAG"""
-    logger.info(f"Received ticket for analysis: {input.ticket[:100]}...")
-    
-    log_entry = AnalysisLog(ticket_input=input.ticket)
-    
-    try:
-        # Get relevant context from RAG
-        rag_context = await asyncio.to_thread(
-            rag_service.get_relevant_context, 
-            input.ticket
-        )
-        logger.info(f"RAG context retrieved: {len(rag_context)} chars")
-        
-        # Call LLM for analysis using standard OpenAI SDK
-        from openai import OpenAI
-        
-        api_key = os.environ.get('OPENAI_API_KEY')
-        if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
-        
-        client = OpenAI(api_key=api_key)
-        
-        system_prompt = """You are an expert IT incident analyst.
-
-Analyze the incident ticket and provide a structured response in STRICT JSON format.
-
-Your response MUST be valid JSON with these exact fields:
-{
-    "summary": "Brief 1-2 sentence summary of the incident",
-    "priority": "P1, P2, or P3 based on severity (P1=Critical/Service Down, P2=High/Degraded, P3=Medium/Minor)",
-    "root_cause": "Most likely root cause based on symptoms described",
-    "resolution_steps": "Step-by-step resolution actions based on runbook knowledge",
-    "bridge_update": "Professional bridge communication update for stakeholders (only for P1 incidents, otherwise 'N/A')",
-    "confidence_score": 0-100 integer indicating your confidence in the analysis,
-    "needs_human_review": true/false based on complexity and confidence
-}
-
-Rules:
-- P1: Complete service outage, 100+ users affected, revenue impact
-- P2: Partial outage, degraded service, 10-100 users affected
-- P3: Minor issue, workaround available, <10 users affected
-- Set needs_human_review to true if confidence_score < 80 or if the issue is ambiguous
-- Bridge updates should be concise, professional, and include: Issue Summary, Impact, Current Status, Next Steps, ETA if known"""
-
-        user_prompt = f"""Analyze this IT incident ticket:
-
-TICKET:
-{input.ticket}
-
-RELEVANT RUNBOOK CONTEXT:
-{rag_context}
-
-Provide your analysis in the exact JSON format specified. Ensure resolution_steps are based on the runbook context when applicable."""
-
-        completion = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3
-        )
-        
-        response = completion.choices[0].message.content
-        
-        log_entry.gpt_response = response
-        logger.info(f"LLM response received: {response[:200]}...")
-        
-        # Parse JSON response
-        try:
-            # Extract JSON from response (handle markdown code blocks)
-            json_str = response
-            if "```json" in response:
-                json_str = response.split("```json")[1].split("```")[0]
-            elif "```" in response:
-                json_str = response.split("```")[1].split("```")[0]
-            
-            analysis_data = json.loads(json_str.strip())
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {e}")
-            # Fallback parsing
-            analysis_data = {
-                "summary": "Unable to parse structured response",
-                "priority": "P3",
-                "root_cause": "Analysis parsing error - please review manually",
-                "resolution_steps": response,
-                "bridge_update": "N/A",
-                "confidence_score": 30,
-                "needs_human_review": True
-            }
-        
-        # Validate and normalize data
-        confidence = int(analysis_data.get("confidence_score", 50))
-        needs_review = analysis_data.get("needs_human_review", confidence < 80)
-        
-        # Handle cases where LLM returns lists instead of strings
-        def normalize_field(field_value, default=""):
-            if isinstance(field_value, list):
-                return "\n".join(str(item) for item in field_value)
-            return str(field_value) if field_value else default
-        
-        # Create result
-        result = AnalysisResult(
-            ticket=input.ticket,
-            summary=normalize_field(analysis_data.get("summary"), "Analysis pending"),
-            priority=analysis_data.get("priority", "P3"),
-            root_cause=normalize_field(analysis_data.get("root_cause"), "Unable to determine"),
-            resolution_steps=normalize_field(analysis_data.get("resolution_steps"), "Manual review required"),
-            bridge_update=normalize_field(analysis_data.get("bridge_update"), "N/A"),
-            confidence_score=confidence,
-            needs_human_review=needs_review
-        )
-        
-        # Store analysis in database
-        doc = result.model_dump()
-        doc['timestamp'] = doc['timestamp'].isoformat()
-        await db.analyses.insert_one(doc)
-        
-        # Store log
-        log_doc = log_entry.model_dump()
-        log_doc['timestamp'] = log_doc['timestamp'].isoformat()
-        await db.analysis_logs.insert_one(log_doc)
-        
-        logger.info(f"Analysis complete: Priority={result.priority}, Confidence={result.confidence_score}")
-        return result
-        
-    except Exception as e:
-        logger.error(f"Analysis error: {str(e)}")
-        log_entry.error = str(e)
-        log_doc = log_entry.model_dump()
-        log_doc['timestamp'] = log_doc['timestamp'].isoformat()
-        await db.analysis_logs.insert_one(log_doc)
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
-
-@api_router.get("/analyses", response_model=List[AnalysisResult])
-async def get_analyses(limit: int = 20):
-    """Get recent analyses"""
-    analyses = await db.analyses.find(
-        {}, 
-        {"_id": 0}
-    ).sort("timestamp", -1).limit(limit).to_list(limit)
-    
-    for analysis in analyses:
-        if isinstance(analysis.get('timestamp'), str):
-            analysis['timestamp'] = datetime.fromisoformat(analysis['timestamp'])
-    
-    return analyses
-
-@api_router.get("/runbooks")
-async def list_runbooks():
-    """List available runbooks"""
-    runbooks_dir = ROOT_DIR / 'runbooks'
-    runbooks = []
-    if runbooks_dir.exists():
-        for f in runbooks_dir.glob('*.md'):
-            runbooks.append({
-                "name": f.stem.replace('_', ' ').title(),
-                "filename": f.name
-            })
-    return {"runbooks": runbooks}
-
-# Include the router
-app.include_router(api_router)
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize services on startup"""
-    logger.info("Starting AI Incident Co-Pilot...")
-    # Load RAG index in background
-    asyncio.create_task(asyncio.to_thread(rag_service.load_documents))
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
-```
-
----
-
-### backend/rag_service.py
-
-```python
-"""RAG Service using LlamaIndex and FAISS for incident resolution knowledge base"""
-
-import os
-import logging
-from pathlib import Path
-from typing import Optional
-
-logger = logging.getLogger(__name__)
-
-class RAGService:
-    """Retrieval Augmented Generation service for incident runbooks"""
-    
-    def __init__(self):
-        self.index = None
-        self.is_loaded = False
-        self.runbooks_dir = Path(__file__).parent / 'runbooks'
-        
-    def load_documents(self):
-        """Load runbook documents and create FAISS index"""
-        try:
-            logger.info("Loading runbook documents for RAG...")
-            
-            # Import LlamaIndex components
-            from llama_index.core import (
-                SimpleDirectoryReader,
-                VectorStoreIndex,
-                Settings
-            )
-            from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-            
-            # Configure embedding model (local, no API needed)
-            embed_model = HuggingFaceEmbedding(
-                model_name="sentence-transformers/all-MiniLM-L6-v2"
-            )
-            Settings.embed_model = embed_model
-            Settings.llm = None  # We'll use external LLM
-            
-            # Check if runbooks directory exists
-            if not self.runbooks_dir.exists():
-                logger.warning(f"Runbooks directory not found: {self.runbooks_dir}")
-                self.is_loaded = False
-                return
-            
-            # Load documents
-            documents = SimpleDirectoryReader(
-                input_dir=str(self.runbooks_dir),
-                required_exts=[".md"],
-                recursive=True
-            ).load_data()
-            
-            if not documents:
-                logger.warning("No runbook documents found")
-                self.is_loaded = False
-                return
-            
-            logger.info(f"Loaded {len(documents)} runbook documents")
-            
-            # Create vector index
-            self.index = VectorStoreIndex.from_documents(
-                documents,
-                show_progress=True
-            )
-            
-            self.is_loaded = True
-            logger.info("RAG index created successfully")
-            
-        except Exception as e:
-            logger.error(f"Error loading RAG documents: {str(e)}")
-            self.is_loaded = False
-    
-    def get_relevant_context(self, query: str, top_k: int = 3) -> str:
-        """Retrieve relevant context from runbooks for a given query"""
-        if not self.is_loaded or self.index is None:
-            logger.warning("RAG index not loaded, returning generic context")
-            return "No runbook context available. Provide general IT troubleshooting advice."
-        
-        try:
-            # Create retriever
-            retriever = self.index.as_retriever(
-                similarity_top_k=top_k
-            )
-            
-            # Retrieve relevant nodes
-            nodes = retriever.retrieve(query)
-            
-            if not nodes:
-                return "No relevant runbook entries found. Provide general IT troubleshooting advice."
-            
-            # Combine context from retrieved nodes
-            context_parts = []
-            for i, node in enumerate(nodes, 1):
-                source = node.metadata.get('file_name', 'Unknown')
-                context_parts.append(
-                    f"[Source {i}: {source}]\n{node.text}\n"
-                )
-            
-            return "\n---\n".join(context_parts)
-            
-        except Exception as e:
-            logger.error(f"Error retrieving context: {str(e)}")
-            return "Error retrieving runbook context. Provide general IT troubleshooting advice."
-```
-
----
-
-### backend/requirements.txt
+## FILE 1: backend/requirements.txt
 
 ```
 fastapi==0.110.1
@@ -431,1048 +47,838 @@ pymongo==4.5.0
 motor==3.3.1
 pydantic>=2.6.4
 requests>=2.31.0
-
-# LLM Integration (standard OpenAI SDK)
-openai>=1.0.0
-
-# RAG Components
-llama-index>=0.10.0
-llama-index-embeddings-huggingface>=0.2.0
-faiss-cpu>=1.7.4
-sentence-transformers>=2.2.0
+groq>=0.4.2
+httpx>=0.27.0
+rank-bm25==0.2.2
+numpy>=1.24.0
 ```
+
+> **CRITICAL**: Do NOT add torch, sentence-transformers, llama-index, faiss — they crash Render Free Tier (512MB RAM).
 
 ---
 
-## FRONTEND CODE
+## FILE 2: backend/.env.example
 
-### frontend/src/App.js
-
-```javascript
-import { useState, useEffect } from "react";
-import "@/App.css";
-import axios from "axios";
-import { 
-  Warning, 
-  CheckCircle, 
-  Copy, 
-  Lightning, 
-  Cpu,
-  Clipboard,
-  ArrowRight,
-  User
-} from "@phosphor-icons/react";
-import { Toaster, toast } from "sonner";
-
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
-
-// Sample tickets for demo
-const SAMPLE_TICKETS = [
-  {
-    title: "SIP Registration Failure",
-    ticket: `INCIDENT: Multiple users unable to make/receive calls
-TIME: Started 10:30 AM EST
-IMPACT: 50+ agents in Contact Center unable to login
-SYMPTOMS:
-- Phones showing "Registering" status
-- SIP 408 timeout errors in logs
-- CUCM Publisher showing high CPU (95%)
-- Recent network change: Firewall rule update at 10:15 AM
-USER REPORTS: "Phone won't connect, stuck on registering screen"
-BUSINESS IMPACT: Contact center operations severely impacted, customer calls going to voicemail`
-  },
-  {
-    title: "Contact Center Agent Queue Issue",
-    ticket: `INCIDENT: Calls not routing to available agents
-TIME: Ongoing for past 2 hours
-IMPACT: 200+ calls stuck in queue despite agents being Ready
-SYMPTOMS:
-- Agent states showing "Ready" in Finesse
-- Queue showing 180 calls waiting
-- Skill group shows 0 agents available
-- No routing to any agent in 2 skill groups
-USER REPORTS: "I'm ready but no calls coming through"
-BUSINESS IMPACT: Critical - SLA breached, customers abandoning calls`
-  },
-  {
-    title: "One-Way Audio Issue",
-    ticket: `INCIDENT: Intermittent one-way audio on external calls
-TIME: Reported by multiple users today
-IMPACT: 15+ users experiencing issue
-SYMPTOMS:
-- Customer can hear agent, agent cannot hear customer
-- Issue only on calls going through SBC
-- No issues on internal calls
-- RTP traffic visible in one direction only
-USER REPORTS: "Customer keeps saying hello but I can't hear them"
-ENVIRONMENT: Cisco CUCM -> Audiocodes SBC -> SIP Trunk to carrier`
-  }
-];
-
-function App() {
-  const [ticketText, setTicketText] = useState("");
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [result, setResult] = useState(null);
-  const [loadingText, setLoadingText] = useState("");
-
-  // Loading text animation
-  useEffect(() => {
-    if (isAnalyzing) {
-      const texts = [
-        "ANALYZING INCIDENT VECTOR...",
-        "QUERYING KNOWLEDGE BASE...",
-        "CORRELATING SYMPTOMS...",
-        "GENERATING RESOLUTION PATH...",
-        "COMPUTING CONFIDENCE SCORE..."
-      ];
-      let index = 0;
-      const interval = setInterval(() => {
-        setLoadingText(texts[index % texts.length]);
-        index++;
-      }, 1500);
-      return () => clearInterval(interval);
-    }
-  }, [isAnalyzing]);
-
-  const handleAnalyze = async () => {
-    if (!ticketText.trim()) {
-      toast.error("Please enter a ticket description");
-      return;
-    }
-
-    setIsAnalyzing(true);
-    setResult(null);
-
-    try {
-      const response = await axios.post(`${API}/analyze`, {
-        ticket: ticketText
-      });
-      setResult(response.data);
-      toast.success("Analysis complete");
-    } catch (error) {
-      console.error("Analysis error:", error);
-      toast.error(error.response?.data?.detail || "Analysis failed");
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  const handleCopyBridgeUpdate = () => {
-    if (result?.bridge_update && result.bridge_update !== "N/A") {
-      navigator.clipboard.writeText(result.bridge_update);
-      toast.success("Bridge update copied to clipboard");
-    }
-  };
-
-  const loadSampleTicket = (sample) => {
-    setTicketText(sample.ticket);
-    setResult(null);
-    toast.info(`Loaded: ${sample.title}`);
-  };
-
-  const getPriorityBadge = (priority) => {
-    const classes = {
-      P1: "badge-p1",
-      P2: "badge-p2",
-      P3: "badge-p3"
-    };
-    const icons = {
-      P1: <Lightning weight="fill" size={14} />,
-      P2: <Warning weight="fill" size={14} />,
-      P3: <Cpu weight="fill" size={14} />
-    };
-    return (
-      <span className={classes[priority] || "badge-p3"} data-testid="priority-badge">
-        {icons[priority]}
-        {priority} {priority === "P1" ? "CRITICAL" : priority === "P2" ? "HIGH" : "MEDIUM"}
-      </span>
-    );
-  };
-
-  return (
-    <div className="min-h-screen bg-[#F8F9FA]">
-      <Toaster position="top-right" richColors />
-      
-      {/* Header */}
-      <header className="border-b border-black/10 bg-white">
-        <div className="w-full max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-black flex items-center justify-center">
-                <Cpu className="text-white" size={24} weight="bold" />
-              </div>
-              <div>
-                <h1 className="font-heading text-xl font-black tracking-tighter text-[#111827]" data-testid="app-title">
-                  AI INCIDENT CO-PILOT
-                </h1>
-                <p className="text-xs font-mono text-[#9CA3AF] tracking-wider">
-                  INTELLIGENT TICKET ANALYSIS
-                </p>
-              </div>
-            </div>
-            <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-[#9CA3AF]">
-              <span className="w-2 h-2 bg-[#10B981] rounded-full animate-pulse"></span>
-              SYSTEM OPERATIONAL
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="w-full max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          
-          {/* Left Pane - Input */}
-          <div className="col-span-1 lg:col-span-4 flex flex-col gap-6 lg:sticky lg:top-6">
-            {/* Ticket Input Card */}
-            <div className="card-default p-6">
-              <div className="flex items-center justify-between mb-4">
-                <span className="label-overline">INCIDENT TICKET</span>
-                <span className="text-xs font-mono text-[#9CA3AF]">
-                  {ticketText.length} chars
-                </span>
-              </div>
-              
-              <textarea
-                data-testid="ticket-input"
-                className="textarea-field mb-4"
-                placeholder={`Paste your incident ticket here...
-
-Example format:
-INCIDENT: Brief description
-TIME: When it started
-IMPACT: Who/what is affected
-SYMPTOMS: What you're observing
-USER REPORTS: What users are saying
-BUSINESS IMPACT: Service level effect`}
-                value={ticketText}
-                onChange={(e) => setTicketText(e.target.value)}
-                disabled={isAnalyzing}
-              />
-
-              <button
-                data-testid="analyze-button"
-                className="btn-primary w-full flex items-center justify-center gap-2"
-                onClick={handleAnalyze}
-                disabled={isAnalyzing || !ticketText.trim()}
-              >
-                {isAnalyzing ? (
-                  <>
-                    <span className="loading-spinner"></span>
-                    ANALYZING...
-                  </>
-                ) : (
-                  <>
-                    <ArrowRight weight="bold" size={18} />
-                    ANALYZE INCIDENT
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Sample Tickets */}
-            <div className="card-default p-6">
-              <span className="label-overline mb-4 block">SAMPLE TICKETS</span>
-              <div className="flex flex-col gap-2">
-                {SAMPLE_TICKETS.map((sample, index) => (
-                  <button
-                    key={index}
-                    data-testid={`sample-ticket-${index}`}
-                    className="btn-secondary text-left text-sm py-2 px-3 flex items-center gap-2"
-                    onClick={() => loadSampleTicket(sample)}
-                  >
-                    <Clipboard size={16} />
-                    {sample.title}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Right Pane - Results */}
-          <div className="col-span-1 lg:col-span-8 flex flex-col gap-6">
-            {isAnalyzing ? (
-              /* Loading State */
-              <div className="card-default loading-card p-8 border-2" data-testid="loading-state">
-                <div className="flex flex-col items-center justify-center py-12">
-                  <div className="w-16 h-16 bg-black flex items-center justify-center mb-6">
-                    <Cpu className="text-white animate-pulse" size={32} weight="bold" />
-                  </div>
-                  <p className="font-mono text-sm text-[#111827] mb-2">
-                    <span className="loading-spinner mr-2"></span>
-                    {loadingText}
-                  </p>
-                  <p className="text-xs text-[#9CA3AF] font-mono">
-                    Querying RAG knowledge base...
-                  </p>
-                </div>
-              </div>
-            ) : result ? (
-              /* Results Grid */
-              <>
-                {/* Priority & Confidence Row */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Priority Card */}
-                  <div className="card-default card-hover p-6" data-testid="priority-card">
-                    <span className="label-overline mb-3 block">PRIORITY LEVEL</span>
-                    <div className="flex items-center justify-between">
-                      {getPriorityBadge(result.priority)}
-                    </div>
-                  </div>
-
-                  {/* Confidence Card */}
-                  <div className="card-default card-hover p-6" data-testid="confidence-card">
-                    <span className="label-overline mb-3 block">CONFIDENCE SCORE</span>
-                    <div className="flex items-center gap-4">
-                      <span className="font-heading text-3xl font-black" data-testid="confidence-score">
-                        {result.confidence_score}%
-                      </span>
-                      <div className="flex-1">
-                        <div className="confidence-bar">
-                          <div 
-                            className="confidence-fill"
-                            style={{ width: `${result.confidence_score}%` }}
-                          ></div>
-                        </div>
-                      </div>
-                    </div>
-                    {result.needs_human_review && (
-                      <div className="mt-3">
-                        <span className="badge-warning" data-testid="human-review-badge">
-                          <Warning weight="fill" size={14} />
-                          NEEDS HUMAN REVIEW
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Summary Card */}
-                <div className="card-default card-hover p-6" data-testid="summary-card">
-                  <span className="label-overline mb-3 block">INCIDENT SUMMARY</span>
-                  <p className="text-[#111827] leading-relaxed" data-testid="summary-text">
-                    {result.summary}
-                  </p>
-                </div>
-
-                {/* Root Cause & Resolution Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Root Cause */}
-                  <div className="card-default card-hover p-6" data-testid="root-cause-card">
-                    <span className="label-overline mb-3 block">PROBABLE ROOT CAUSE</span>
-                    <p className="text-[#111827] text-sm leading-relaxed" data-testid="root-cause-text">
-                      {result.root_cause}
-                    </p>
-                  </div>
-
-                  {/* Resolution Steps */}
-                  <div className="card-default card-hover p-6" data-testid="resolution-card">
-                    <span className="label-overline mb-3 block">RESOLUTION STEPS</span>
-                    <div className="text-[#111827] text-sm leading-relaxed whitespace-pre-wrap" data-testid="resolution-text">
-                      {result.resolution_steps}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Bridge Update (P1 only) */}
-                {result.priority === "P1" && result.bridge_update !== "N/A" && (
-                  <div className="card-default p-6" data-testid="bridge-update-card">
-                    <div className="flex items-center justify-between mb-4">
-                      <span className="label-overline">P1 BRIDGE COMMUNICATION</span>
-                      <button
-                        data-testid="bridge-update-copy"
-                        className="btn-secondary py-1 px-3 text-xs flex items-center gap-1"
-                        onClick={handleCopyBridgeUpdate}
-                      >
-                        <Copy size={14} />
-                        COPY
-                      </button>
-                    </div>
-                    <div className="terminal-block whitespace-pre-wrap" data-testid="bridge-update-text">
-                      {result.bridge_update}
-                    </div>
-                  </div>
-                )}
-
-                {/* Success Indicator */}
-                <div className="flex items-center justify-center gap-2 py-4 text-[#10B981]">
-                  <CheckCircle weight="fill" size={20} />
-                  <span className="font-mono text-sm">ANALYSIS COMPLETE</span>
-                </div>
-              </>
-            ) : (
-              /* Empty State */
-              <div className="card-default p-12 border-dashed border-2" data-testid="empty-state">
-                <div className="flex flex-col items-center justify-center text-center">
-                  <div className="w-20 h-20 bg-[#F1F3F5] flex items-center justify-center mb-6">
-                    <User className="text-[#9CA3AF]" size={40} weight="light" />
-                  </div>
-                  <h3 className="font-heading text-lg font-bold text-[#111827] mb-2">
-                    Ready to Analyze
-                  </h3>
-                  <p className="text-sm text-[#4B5563] max-w-md mb-4">
-                    Paste an incident ticket on the left or select a sample ticket to see the AI-powered analysis in action.
-                  </p>
-                  <p className="text-xs font-mono text-[#9CA3AF]">
-                  RAG-POWERED | AI ANALYSIS | RUNBOOK-INTEGRATED
-                </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-black/10 mt-12">
-        <div className="w-full max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between text-xs font-mono text-[#9CA3AF]">
-            <span>AI INCIDENT CO-PILOT v1.0</span>
-            <span>POWERED BY GPT-4O-MINI + RAG</span>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
-}
-
-export default App;
 ```
-
----
-
-### frontend/src/App.css
-
-```css
-/* App-specific overrides and animations */
-
-/* Ensure no rounded corners anywhere */
-* {
-    border-radius: 0 !important;
-}
-
-/* ASCII spinner keyframes */
-@keyframes ascii-spin {
-    0% { content: '|'; }
-    25% { content: '/'; }
-    50% { content: '-'; }
-    75% { content: '\\'; }
-}
-
-/* Smooth scroll */
-html {
-    scroll-behavior: smooth;
-}
-
-/* Focus visible for accessibility */
-:focus-visible {
-    outline: 2px solid #0B0C10;
-    outline-offset: 2px;
-}
-
-/* Selection color */
-::selection {
-    background-color: #0B0C10;
-    color: #F9FAFB;
-}
-
-/* Card shadow on hover */
-.card-hover:hover {
-    box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
-    border-color: #0B0C10 !important;
-    transform: translateY(-2px);
-}
-
-/* Terminal block styling */
-.terminal-block {
-    background: linear-gradient(180deg, #0B0C10 0%, #1a1b1f 100%);
-    font-variant-ligatures: none;
-}
-
-/* Animate confidence bar on load */
-@keyframes grow-width {
-    from { width: 0; }
-}
-
-.confidence-fill {
-    animation: grow-width 1s ease-out;
-}
-
-/* Loading card border animation */
-@keyframes border-pulse {
-    0%, 100% { 
-        border-color: rgba(0,0,0,0.2);
-    }
-    50% { 
-        border-color: rgba(0,0,0,0.8);
-    }
-}
-
-.loading-card {
-    animation: border-pulse 1.5s ease-in-out infinite;
-}
-
-/* Textarea placeholder styling */
-.textarea-field::placeholder {
-    color: #9CA3AF;
-    font-size: 0.8rem;
-}
-
-/* Button active states */
-.btn-primary:active,
-.btn-secondary:active {
-    transform: translateY(1px);
-}
-
-/* Disabled state improvements */
-.btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
-}
-
-/* Badge pulse for critical */
-.badge-p1 {
-    animation: pulse-subtle 2s ease-in-out infinite;
-}
-
-@keyframes pulse-subtle {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.8; }
-}
-
-/* Header shadow on scroll - handled via JS if needed */
-header {
-    transition: box-shadow 0.2s ease;
-}
-
-/* Grid gap adjustments for mobile */
-@media (max-width: 1024px) {
-    .grid {
-        gap: 1rem;
-    }
-}
-
-/* Ensure monospace text doesn't wrap awkwardly */
-.font-mono {
-    word-break: break-word;
-    overflow-wrap: break-word;
-}
-
-/* Status indicator pulse */
-@keyframes status-pulse {
-    0%, 100% { 
-        opacity: 1;
-        transform: scale(1);
-    }
-    50% { 
-        opacity: 0.5;
-        transform: scale(1.2);
-    }
-}
-
-/* Make the green status dot pulse */
-.animate-pulse {
-    animation: status-pulse 2s ease-in-out infinite;
-}
-```
-
----
-
-### frontend/src/index.css
-
-```css
-@import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;700;900&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-:root {
-    --background-main: #F8F9FA;
-    --background-surface: #FFFFFF;
-    --background-surface-alt: #F1F3F5;
-    --background-inverted: #0B0C10;
-    
-    --text-primary: #111827;
-    --text-secondary: #4B5563;
-    --text-tertiary: #9CA3AF;
-    --text-inverted: #F9FAFB;
-    
-    --border-default: rgba(0,0,0,0.1);
-    --border-strong: rgba(0,0,0,0.8);
-    
-    --accent-primary: #0B0C10;
-    --accent-primary-hover: #1F2937;
-    --p1-critical: #E63946;
-    --p2-high: #F59E0B;
-    --p3-medium: #2563EB;
-    --success: #10B981;
-    --warning: #F59E0B;
-    --error: #E63946;
-}
-
-body {
-    margin: 0;
-    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    background-color: var(--background-main);
-    color: var(--text-primary);
-}
-
-.font-heading {
-    font-family: 'Chivo', sans-serif;
-}
-
-.font-mono {
-    font-family: 'JetBrains Mono', monospace;
-}
-
-code {
-    font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, monospace;
-}
-
-@layer base {
-    :root {
-        --background: 0 0% 98%;
-        --foreground: 220 15% 10%;
-        --card: 0 0% 100%;
-        --card-foreground: 220 15% 10%;
-        --popover: 0 0% 100%;
-        --popover-foreground: 220 15% 10%;
-        --primary: 220 15% 6%;
-        --primary-foreground: 0 0% 98%;
-        --secondary: 220 10% 96%;
-        --secondary-foreground: 220 15% 10%;
-        --muted: 220 10% 96%;
-        --muted-foreground: 220 8% 45%;
-        --accent: 220 10% 96%;
-        --accent-foreground: 220 15% 10%;
-        --destructive: 0 70% 50%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 220 10% 90%;
-        --input: 220 10% 90%;
-        --ring: 220 15% 10%;
-        --chart-1: 12 76% 61%;
-        --chart-2: 173 58% 39%;
-        --chart-3: 197 37% 24%;
-        --chart-4: 43 74% 66%;
-        --chart-5: 27 87% 67%;
-        --radius: 0;
-    }
-}
-
-@layer base {
-    * {
-        @apply border-border;
-    }
-    body {
-        @apply bg-background text-foreground;
-    }
-}
-
-/* Custom component styles */
-.card-default {
-    @apply bg-white border border-black/10 shadow-none;
-    border-radius: 0;
-}
-
-.card-hover {
-    @apply transition-all duration-200;
-}
-
-.card-hover:hover {
-    transform: translateY(-2px);
-    box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
-    border-color: black;
-}
-
-.terminal-block {
-    background-color: var(--background-inverted);
-    color: var(--text-inverted);
-    border: 1px solid black;
-    padding: 1rem;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.875rem;
-    border-radius: 0;
-}
-
-.btn-primary {
-    @apply bg-black text-white font-bold tracking-wide px-6 py-3 border border-transparent transition-all;
-    border-radius: 0;
-}
-
-.btn-primary:hover {
-    @apply bg-gray-800;
-}
-
-.btn-primary:active {
-    transform: translateY(1px);
-}
-
-.btn-primary:disabled {
-    @apply bg-gray-400 cursor-not-allowed;
-}
-
-.btn-secondary {
-    @apply bg-transparent text-black border border-black/20 font-bold tracking-wide px-6 py-3 transition-all;
-    border-radius: 0;
-}
-
-.btn-secondary:hover {
-    @apply border-black;
-}
-
-.input-field {
-    @apply w-full border border-black/20 bg-white px-4 py-2 text-sm outline-none transition-all;
-    border-radius: 0;
-}
-
-.input-field:focus {
-    @apply border-black ring-1 ring-black;
-}
-
-.textarea-field {
-    @apply w-full border border-black/20 bg-white p-4 text-sm outline-none transition-all resize-y;
-    font-family: 'JetBrains Mono', monospace;
-    border-radius: 0;
-    min-height: 300px;
-}
-
-.textarea-field:focus {
-    @apply border-black ring-1 ring-black;
-}
-
-/* Priority badges */
-.badge-p1 {
-    @apply bg-red-50 text-red-600 border border-red-200 px-3 py-1 text-xs font-bold uppercase tracking-widest inline-flex items-center gap-2;
-    font-family: 'JetBrains Mono', monospace;
-    border-radius: 0;
-}
-
-.badge-p2 {
-    @apply bg-amber-50 text-amber-600 border border-amber-200 px-3 py-1 text-xs font-bold uppercase tracking-widest inline-flex items-center gap-2;
-    font-family: 'JetBrains Mono', monospace;
-    border-radius: 0;
-}
-
-.badge-p3 {
-    @apply bg-blue-50 text-blue-600 border border-blue-200 px-3 py-1 text-xs font-bold uppercase tracking-widest inline-flex items-center gap-2;
-    font-family: 'JetBrains Mono', monospace;
-    border-radius: 0;
-}
-
-.badge-warning {
-    @apply px-3 py-1 text-xs font-bold uppercase tracking-widest inline-flex items-center gap-2;
-    font-family: 'JetBrains Mono', monospace;
-    background-color: #FFF9DB;
-    color: #B08800;
-    border: 1px solid #FFE066;
-    border-radius: 0;
-}
-
-/* Confidence bar */
-.confidence-bar {
-    @apply h-2 w-full bg-gray-100 overflow-hidden;
-}
-
-.confidence-fill {
-    @apply h-full bg-black transition-all duration-1000 ease-out;
-}
-
-/* ASCII Loading Animation */
-@keyframes spin-ascii {
-    0% { content: '|'; }
-    25% { content: '/'; }
-    50% { content: '-'; }
-    75% { content: '\\'; }
-    100% { content: '|'; }
-}
-
-.loading-spinner::after {
-    content: '|';
-    animation: spin-ascii 0.5s infinite steps(4);
-    font-family: 'JetBrains Mono', monospace;
-}
-
-/* Pulse animation for loading card */
-@keyframes pulse-border {
-    0%, 100% { border-color: rgba(0,0,0,0.2); }
-    50% { border-color: rgba(0,0,0,0.8); }
-}
-
-.loading-card {
-    animation: pulse-border 1.5s ease-in-out infinite;
-}
-
-/* Label overline style */
-.label-overline {
-    @apply text-xs font-bold uppercase tracking-widest;
-    font-family: 'JetBrains Mono', monospace;
-    color: var(--text-tertiary);
-}
-
-/* Scroll area customization */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: var(--background-surface-alt);
-}
-
-::-webkit-scrollbar-thumb {
-    background: var(--text-tertiary);
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: var(--text-secondary);
-}
-
-/* Remove rounded corners from all shadcn components */
-[class*="rounded"] {
-    border-radius: 0 !important;
-}
-
-@layer base {
-    [data-debug-wrapper="true"] {
-        display: contents !important;
-    }
-}
-```
-
----
-
-### frontend/package.json
-
-```json
-{
-  "name": "frontend",
-  "version": "0.1.0",
-  "private": true,
-  "dependencies": {
-    "@hookform/resolvers": "^5.0.1",
-    "@phosphor-icons/react": "^2.1.10",
-    "@radix-ui/react-accordion": "^1.2.8",
-    "@radix-ui/react-alert-dialog": "^1.1.11",
-    "@radix-ui/react-aspect-ratio": "^1.1.4",
-    "@radix-ui/react-avatar": "^1.1.7",
-    "@radix-ui/react-checkbox": "^1.2.3",
-    "@radix-ui/react-collapsible": "^1.1.8",
-    "@radix-ui/react-context-menu": "^2.2.12",
-    "@radix-ui/react-dialog": "^1.1.11",
-    "@radix-ui/react-dropdown-menu": "^2.1.12",
-    "@radix-ui/react-hover-card": "^1.1.11",
-    "@radix-ui/react-label": "^2.1.4",
-    "@radix-ui/react-menubar": "^1.1.12",
-    "@radix-ui/react-navigation-menu": "^1.2.10",
-    "@radix-ui/react-popover": "^1.1.11",
-    "@radix-ui/react-progress": "^1.1.4",
-    "@radix-ui/react-radio-group": "^1.3.4",
-    "@radix-ui/react-scroll-area": "^1.2.6",
-    "@radix-ui/react-select": "^2.2.2",
-    "@radix-ui/react-separator": "^1.1.4",
-    "@radix-ui/react-slider": "^1.3.2",
-    "@radix-ui/react-slot": "^1.2.0",
-    "@radix-ui/react-switch": "^1.2.2",
-    "@radix-ui/react-tabs": "^1.1.9",
-    "@radix-ui/react-toast": "^1.2.11",
-    "@radix-ui/react-toggle": "^1.1.6",
-    "@radix-ui/react-toggle-group": "^1.1.7",
-    "@radix-ui/react-tooltip": "^1.2.4",
-    "axios": "^1.8.4",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "cmdk": "^1.1.1",
-    "cra-template": "1.2.0",
-    "date-fns": "^3.6.0",
-    "embla-carousel-react": "^8.6.0",
-    "input-otp": "^1.4.2",
-    "lucide-react": "^0.507.0",
-    "next-themes": "^0.4.6",
-    "react": "^19.0.0",
-    "react-day-picker": "8.10.1",
-    "react-dom": "^19.0.0",
-    "react-hook-form": "^7.56.2",
-    "react-resizable-panels": "^3.0.1",
-    "react-router-dom": "^7.5.1",
-    "react-scripts": "5.0.1",
-    "recharts": "^3.6.0",
-    "sonner": "^2.0.3",
-    "tailwind-merge": "^3.2.0",
-    "tailwindcss-animate": "^1.0.7",
-    "vaul": "^1.1.2",
-    "zod": "^3.24.4"
-  },
-  "scripts": {
-    "start": "craco start",
-    "build": "craco build",
-    "test": "craco test"
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  },
-  "devDependencies": {
-    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
-    "@craco/craco": "^7.1.0",
-    "@emergentbase/visual-edits": "https://assets.emergent.sh/npm/emergentbase-visual-edits-1.0.8.tgz",
-    "@eslint/js": "9.23.0",
-    "autoprefixer": "^10.4.20",
-    "eslint": "9.23.0",
-    "eslint-plugin-import": "2.31.0",
-    "eslint-plugin-jsx-a11y": "6.10.2",
-    "eslint-plugin-react": "7.37.4",
-    "eslint-plugin-react-hooks": "5.2.0",
-    "globals": "15.15.0",
-    "postcss": "^8.4.49",
-    "serve": "^14.2.6",
-    "tailwindcss": "^3.4.17"
-  },
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
-}
-```
-
----
-
-## SAMPLE RUNBOOK (backend/runbooks/sip_failures.md)
-
-```markdown
-# SIP Failure Troubleshooting Guide
-
-## Overview
-This runbook covers common SIP (Session Initiation Protocol) failures in Unified Communications environments.
-
-## Common Error Codes
-
-### SIP 408 - Request Timeout
-**Symptoms**: Call setup fails with timeout, one-way audio, no ring-back tone
-**Root Causes**:
-- Network connectivity issues between endpoints
-- Firewall blocking SIP signaling (ports 5060/5061)
-- DNS resolution failures
-- Overloaded SIP proxy
-
-**Resolution Steps**:
-1. Verify network connectivity between SIP endpoints using ping and traceroute
-2. Check firewall rules for SIP ports (UDP/TCP 5060, TLS 5061)
-3. Validate DNS records for SIP domain (SRV records)
-4. Check SIP proxy CPU and memory utilization
-5. Review SIP trunk registration status
-6. Capture SIP traces for detailed analysis
-
-### SIP 503 - Service Unavailable
-**Symptoms**: Calls fail immediately, no dial tone
-**Root Causes**:
-- SIP server overloaded
-- Backend services unavailable
-- License exhaustion
-- Database connection failures
-
-**Resolution Steps**:
-1. Check SIP server health and resource utilization
-2. Verify all dependent services are running
-3. Review license usage against capacity
-4. Check database connectivity and performance
-5. Restart affected services if necessary
-6. Scale up resources if load is consistent
-
-### SIP 486 - Busy Here
-**Symptoms**: Call rejected, busy tone
-**Root Causes**:
-- User on another call (DND enabled)
-- Maximum simultaneous calls reached
-- Call forwarding loop
-
-**Resolution Steps**:
-1. Check user's current call status
-2. Verify DND settings
-3. Review call forwarding rules for loops
-4. Check concurrent call limits
-
-## One-Way Audio Issues
-**Symptoms**: Audio flows in only one direction
-**Root Causes**:
-- NAT traversal issues
-- RTP port blocking
-- Codec mismatch
-- Incorrect media routing
-
-**Resolution Steps**:
-1. Verify NAT configuration and STUN/TURN servers
-2. Check RTP port ranges (typically 16384-32767)
-3. Confirm codec negotiation in SIP INVITE/200 OK
-4. Review media routing paths
-5. Enable ICE if supported
-
-## Registration Failures
-**Symptoms**: Phones show unregistered, cannot make/receive calls
-**Root Causes**:
-- Authentication failures
-- Certificate issues (for TLS)
-- Network connectivity
-- SIP registrar overload
-
-**Resolution Steps**:
-1. Verify credentials are correct
-2. Check certificate validity and trust chain
-3. Test network path to registrar
-4. Review registrar logs for specific errors
-5. Check registration expiry intervals
-```
-
----
-
-## ENVIRONMENT VARIABLES
-
-### Backend (.env)
-```
-MONGO_URL=mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority
+GROQ_API_KEY=your_groq_api_key_here
+MONGO_URL=mongodb+srv://user:pass@cluster.mongodb.net/incident_copilot
 DB_NAME=incident_copilot
-OPENAI_API_KEY=sk-your-openai-api-key
 CORS_ORIGINS=*
 ```
 
-### Frontend (.env)
+---
+
+## FILE 3: backend/server.py
+
+```python
+from fastapi import FastAPI, APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+import os
+import logging
+from pathlib import Path
+from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional, Dict
+import uuid
+from datetime import datetime, timezone
+import json
+import asyncio
+import random
+
+# Load environment variables
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Create the main app
+app = FastAPI(title="AI Incident Co-Pilot Enterprise", version="2.0.0")
+api_router = APIRouter(prefix="/api")
+
+# Initialize Groq client
+from groq import Groq
+groq_client = None
+groq_api_key = os.environ.get('GROQ_API_KEY')
+if groq_api_key:
+    try:
+        groq_client = Groq(api_key=groq_api_key)
+        logger.info("Groq client initialized")
+    except Exception as e:
+        logger.error(f"Groq init failed: {e}")
+
+# Initialize lightweight BM25 RAG
+from rag_service import RAGService
+rag_service = RAGService()
+
+# MongoDB connection (lazy load)
+db = None
+
+def get_db():
+    global db
+    if db is None:
+        try:
+            from motor.motor_asyncio import AsyncIOMotorClient
+            mongo_url = os.environ.get('MONGO_URL')
+            if mongo_url:
+                client = AsyncIOMotorClient(mongo_url)
+                db = client[os.environ.get('DB_NAME', 'incident_copilot')]
+                logger.info("MongoDB connected")
+        except Exception as e:
+            logger.error(f"MongoDB failed: {e}")
+    return db
+
+# In-memory fallback
+in_memory_incidents: Dict[str, dict] = {}
+
+# SLA Configuration
+SLA_TARGETS = {"P1": 60, "P2": 240, "P3": 1440}
+
+# Simulation state
+simulation_running = False
+simulation_task = None
+active_connections: List[WebSocket] = []
+
+# Pydantic Models
+class TicketInput(BaseModel):
+    ticket: str
+
+class IncidentUpdate(BaseModel):
+    status: Optional[str] = None
+    summary: Optional[str] = None
+    root_cause: Optional[str] = None
+    resolution_steps: Optional[str] = None
+
+class Incident(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    ticket: str
+    summary: str
+    priority: str
+    status: str = "OPEN"
+    root_cause: str
+    resolution_steps: str
+    bridge_update: str
+    confidence_score: int
+    confidence_band: str = "MEDIUM"
+    needs_human_review: bool
+    key_signals: List[str] = []
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved_at: Optional[datetime] = None
+    sla_target_minutes: int = 1440
+    sla_breached: bool = False
+    sla_remaining_minutes: Optional[int] = None
+
+class SLADashboard(BaseModel):
+    total_incidents: int
+    active_incidents: int
+    resolved_incidents: int
+    breached_incidents: int
+    breach_percentage: float
+    avg_resolution_minutes: float
+    priority_breakdown: Dict[str, int]
+    status_breakdown: Dict[str, int]
+
+# Helper functions
+def check_guardrails(text: str) -> tuple:
+    if len(text) > 10000:
+        return False, "Input too long"
+    bad = ["ignore previous", "ignore all", "system prompt:", "you are now"]
+    for p in bad:
+        if p in text.lower():
+            return False, "Invalid input"
+    return True, "OK"
+
+def extract_key_signals(ticket: str, priority: str) -> List[str]:
+    signals = []
+    t = ticket.lower()
+    if "100+" in ticket or "100 users" in t:
+        signals.append("100+ users -> Critical")
+    elif "50+" in ticket:
+        signals.append("50+ users -> High impact")
+    if "sip 408" in t:
+        signals.append("SIP 408 -> Network issue")
+    if "one-way audio" in t:
+        signals.append("One-way audio -> NAT/RTP")
+    if "queue" in t:
+        signals.append("Queue issue -> Routing")
+    if "cpu" in t and ("95" in ticket or "high" in t):
+        signals.append("High CPU -> Resource issue")
+    signals.append(f"{priority} -> SLA: {SLA_TARGETS.get(priority, 1440)} min")
+    return signals[:5]
+
+def get_confidence_band(score: int) -> str:
+    if score >= 80: return "HIGH"
+    if score >= 60: return "MEDIUM"
+    return "LOW"
+
+def calculate_sla_status(inc: dict) -> dict:
+    created = inc.get('created_at')
+    if isinstance(created, str):
+        created = datetime.fromisoformat(created.replace('Z', '+00:00'))
+    
+    if inc.get('status') == 'RESOLVED':
+        inc['sla_remaining_minutes'] = None
+        resolved = inc.get('resolved_at')
+        if isinstance(resolved, str):
+            resolved = datetime.fromisoformat(resolved.replace('Z', '+00:00'))
+        elapsed = (resolved - created).total_seconds() / 60 if resolved else 0
+    else:
+        elapsed = (datetime.now(timezone.utc) - created).total_seconds() / 60
+        remaining = inc.get('sla_target_minutes', 1440) - elapsed
+        inc['sla_remaining_minutes'] = max(0, int(remaining))
+    
+    inc['sla_breached'] = elapsed > inc.get('sla_target_minutes', 1440)
+    return inc
+
+async def broadcast(data: dict):
+    for conn in active_connections:
+        try:
+            await conn.send_json(data)
+        except:
+            pass
+
+# Routes
+@api_router.get("/")
+async def root():
+    return {"message": "AI Incident Co-Pilot Enterprise", "version": "2.0.0"}
+
+@api_router.get("/health")
+async def health():
+    return {"status": "healthy", "db_connected": get_db() is not None, "simulation_running": simulation_running}
+
+@api_router.post("/analyze", response_model=Incident)
+async def analyze_ticket(input: TicketInput):
+    if not input.ticket.strip():
+        raise HTTPException(400, "Ticket text is required")
+    valid, msg = check_guardrails(input.ticket)
+    if not valid:
+        raise HTTPException(400, msg)
+    
+    logger.info(f"Analyzing: {input.ticket[:80]}...")
+    
+    try:
+        rag_context = rag_service.retrieve(input.ticket)
+        
+        system_prompt = f"""You are an expert IT incident resolver for UC/CC infrastructure.
+Use the RUNBOOK context below to analyze the incident. Respond ONLY with valid JSON, no markdown.
+
+RUNBOOK CONTEXT:
+{rag_context}
+
+Return this exact JSON structure:
+{{"summary": "1-2 sentence summary", "priority": "P1 or P2 or P3", "root_cause": "Most likely root cause", "resolution_steps": "Step-by-step resolution", "bridge_update": "P1 bridge communication or N/A", "confidence_score": 75}}
+
+Priority rules: P1=Critical outage (100+ users/total down), P2=Degraded service (10-100 users), P3=Minor issue (<10 users)"""
+
+        if not groq_client:
+            raise HTTPException(500, "GROQ_API_KEY not configured")
+
+        response = None
+        for attempt in range(3):
+            try:
+                completion = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": input.ticket}
+                    ],
+                    temperature=0.2,
+                )
+                response = completion.choices[0].message.content
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise e
+                await asyncio.sleep(1)
+        
+        try:
+            text = response
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+            data = json.loads(text.strip())
+        except Exception:
+            data = {"summary": response[:200], "priority": "P3", "root_cause": "See summary", 
+                    "resolution_steps": response, "bridge_update": "N/A", "confidence_score": 50}
+        
+        def norm(v):
+            return "\n".join(v) if isinstance(v, list) else str(v) if v else ""
+        
+        priority = data.get("priority", "P3")
+        if priority not in ("P1", "P2", "P3"):
+            priority = "P3"
+        confidence = min(100, max(0, int(data.get("confidence_score", 50))))
+        
+        incident = Incident(
+            ticket=input.ticket,
+            summary=norm(data.get("summary")),
+            priority=priority,
+            root_cause=norm(data.get("root_cause")),
+            resolution_steps=norm(data.get("resolution_steps")),
+            bridge_update=norm(data.get("bridge_update", "N/A")),
+            confidence_score=confidence,
+            confidence_band=get_confidence_band(confidence),
+            needs_human_review=confidence < 80,
+            key_signals=extract_key_signals(input.ticket, priority),
+            sla_target_minutes=SLA_TARGETS.get(priority, 1440)
+        )
+        
+        doc = incident.model_dump()
+        doc['created_at'] = doc['created_at'].isoformat()
+        doc['updated_at'] = doc['updated_at'].isoformat()
+        
+        database = get_db()
+        if database is not None:
+            await database.incidents.insert_one(doc)
+        else:
+            in_memory_incidents[incident.id] = doc
+        
+        await broadcast({"type": "incident", "data": doc})
+        logger.info(f"Done: {incident.id} - {priority}")
+        return incident
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        raise HTTPException(500, f"Analysis failed: {str(e)}")
+
+@api_router.get("/incidents")
+async def get_incidents(limit: int = 50, status: Optional[str] = None):
+    database = get_db()
+    if database is not None:
+        query = {"status": status} if status else {}
+        incidents = await database.incidents.find(query, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
+    else:
+        incidents = list(in_memory_incidents.values())[-limit:]
+        if status:
+            incidents = [i for i in incidents if i.get('status') == status]
+    return [calculate_sla_status(i) for i in incidents]
+
+@api_router.get("/incidents/search")
+async def search_incidents(
+    priority: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    page: int = 1,
+    limit: int = 20
+):
+    database = get_db()
+    skip = (page - 1) * limit
+
+    if database is not None:
+        query = {}
+        if priority:
+            query["priority"] = priority
+        if status:
+            query["status"] = status
+        if search:
+            query["summary"] = {"$regex": search, "$options": "i"}
+        if date_from or date_to:
+            date_q = {}
+            if date_from:
+                date_q["$gte"] = date_from
+            if date_to:
+                date_q["$lte"] = date_to + "T23:59:59"
+            query["created_at"] = date_q
+
+        total = await database.incidents.count_documents(query)
+        items = await database.incidents.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    else:
+        all_items = list(in_memory_incidents.values())
+        if priority:
+            all_items = [i for i in all_items if i.get("priority") == priority]
+        if status:
+            all_items = [i for i in all_items if i.get("status") == status]
+        if search:
+            all_items = [i for i in all_items if search.lower() in (i.get("summary", "") + i.get("ticket", "")).lower()]
+        if date_from:
+            all_items = [i for i in all_items if i.get("created_at", "") >= date_from]
+        if date_to:
+            all_items = [i for i in all_items if i.get("created_at", "") <= date_to + "T23:59:59"]
+        all_items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        total = len(all_items)
+        items = all_items[skip:skip + limit]
+
+    return {
+        "items": [calculate_sla_status(i) for i in items],
+        "total": total,
+        "page": page,
+        "pages": max(1, (total + limit - 1) // limit)
+    }
+
+@api_router.get("/incidents/{id}")
+async def get_incident(id: str):
+    database = get_db()
+    inc = await database.incidents.find_one({"id": id}, {"_id": 0}) if database is not None else in_memory_incidents.get(id)
+    if not inc:
+        raise HTTPException(404, "Not found")
+    return calculate_sla_status(inc)
+
+@api_router.patch("/incidents/{id}")
+async def update_incident(id: str, update: IncidentUpdate):
+    database = get_db()
+    data = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    
+    if update.status:
+        data['status'] = update.status
+        if update.status == "RESOLVED":
+            data['resolved_at'] = datetime.now(timezone.utc).isoformat()
+    if update.summary:
+        data['summary'] = update.summary
+    if update.root_cause:
+        data['root_cause'] = update.root_cause
+    if update.resolution_steps:
+        data['resolution_steps'] = update.resolution_steps
+    
+    if database is not None:
+        result = await database.incidents.update_one({"id": id}, {"$set": data})
+        if result.modified_count == 0:
+            raise HTTPException(404, "Not found")
+        inc = await database.incidents.find_one({"id": id}, {"_id": 0})
+    else:
+        if id not in in_memory_incidents:
+            raise HTTPException(404, "Not found")
+        in_memory_incidents[id].update(data)
+        inc = in_memory_incidents[id]
+    
+    await broadcast({"type": "update", "data": inc})
+    return calculate_sla_status(inc)
+
+@api_router.get("/sla-dashboard", response_model=SLADashboard)
+async def get_dashboard():
+    database = get_db()
+    incidents = await database.incidents.find({}, {"_id": 0}).to_list(1000) if database is not None else list(in_memory_incidents.values())
+    
+    if not incidents:
+        return SLADashboard(total_incidents=0, active_incidents=0, resolved_incidents=0, 
+                           breached_incidents=0, breach_percentage=0, avg_resolution_minutes=0,
+                           priority_breakdown={"P1": 0, "P2": 0, "P3": 0},
+                           status_breakdown={"OPEN": 0, "IN_PROGRESS": 0, "RESOLVED": 0})
+    
+    active = resolved = breached = total_res_time = res_count = 0
+    priority_breakdown = {"P1": 0, "P2": 0, "P3": 0}
+    status_breakdown = {"OPEN": 0, "IN_PROGRESS": 0, "RESOLVED": 0}
+    
+    for inc in incidents:
+        inc = calculate_sla_status(inc)
+        status = inc.get('status', 'OPEN')
+        status_breakdown[status] = status_breakdown.get(status, 0) + 1
+        priority_breakdown[inc.get('priority', 'P3')] = priority_breakdown.get(inc.get('priority', 'P3'), 0) + 1
+        
+        if status == 'RESOLVED':
+            resolved += 1
+            created = inc.get('created_at')
+            resolved_at = inc.get('resolved_at')
+            if created and resolved_at:
+                if isinstance(created, str):
+                    created = datetime.fromisoformat(created.replace('Z', '+00:00'))
+                if isinstance(resolved_at, str):
+                    resolved_at = datetime.fromisoformat(resolved_at.replace('Z', '+00:00'))
+                total_res_time += (resolved_at - created).total_seconds() / 60
+                res_count += 1
+        else:
+            active += 1
+        
+        if inc.get('sla_breached'):
+            breached += 1
+    
+    total = len(incidents)
+    return SLADashboard(
+        total_incidents=total, active_incidents=active, resolved_incidents=resolved,
+        breached_incidents=breached, breach_percentage=round(breached/total*100, 1) if total else 0,
+        avg_resolution_minutes=round(total_res_time/res_count, 1) if res_count else 0,
+        priority_breakdown=priority_breakdown, status_breakdown=status_breakdown
+    )
+
+# Simulation
+TEMPLATES = [
+    "INCIDENT: SIP Registration Failure\nIMPACT: 30+ users\nSYMPTOMS: SIP 408 timeout",
+    "INCIDENT: One-way audio\nIMPACT: 20+ users\nSYMPTOMS: Customer can hear, agent cannot",
+    "INCIDENT: Queue Issue\nIMPACT: 100+ calls stuck\nSYMPTOMS: Agents ready but no calls",
+    "INCIDENT: High CPU on gateway\nIMPACT: Call drops\nSYMPTOMS: CPU at 95%",
+    "INCIDENT: DNS failure\nIMPACT: New registrations failing\nSYMPTOMS: DNS timeout"
+]
+
+@api_router.post("/simulate/start")
+async def start_sim():
+    global simulation_running, simulation_task
+    if simulation_running:
+        return {"status": "already_running"}
+    simulation_running = True
+    simulation_task = asyncio.create_task(run_sim())
+    return {"status": "started"}
+
+@api_router.post("/simulate/stop")
+async def stop_sim():
+    global simulation_running, simulation_task
+    simulation_running = False
+    if simulation_task:
+        simulation_task.cancel()
+    return {"status": "stopped"}
+
+@api_router.get("/simulate/status")
+async def sim_status():
+    return {"running": simulation_running}
+
+async def run_sim():
+    global simulation_running
+    while simulation_running:
+        try:
+            await asyncio.sleep(random.randint(15, 45))
+            if not simulation_running:
+                break
+            await analyze_ticket(TicketInput(ticket=random.choice(TEMPLATES)))
+            logger.info("Simulated incident created")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Sim error: {e}")
+            await asyncio.sleep(5)
+
+@api_router.get("/trends")
+async def get_trends():
+    database = get_db()
+    incidents = await database.incidents.find({}, {"_id": 0}).to_list(5000) if database is not None else list(in_memory_incidents.values())
+
+    volume_by_date = {}
+    mttr_by_date = {}
+    priority_by_date = {}
+    summary_counts = {}
+
+    for inc in incidents:
+        created = inc.get("created_at", "")
+        if isinstance(created, str):
+            day = created[:10]
+        else:
+            day = created.isoformat()[:10]
+
+        volume_by_date[day] = volume_by_date.get(day, 0) + 1
+
+        p = inc.get("priority", "P3")
+        if day not in priority_by_date:
+            priority_by_date[day] = {"P1": 0, "P2": 0, "P3": 0}
+        priority_by_date[day][p] = priority_by_date[day].get(p, 0) + 1
+
+        if inc.get("status") == "RESOLVED" and inc.get("resolved_at"):
+            c = inc.get("created_at", "")
+            r = inc.get("resolved_at", "")
+            try:
+                if isinstance(c, str):
+                    c = datetime.fromisoformat(c.replace("Z", "+00:00"))
+                if isinstance(r, str):
+                    r = datetime.fromisoformat(r.replace("Z", "+00:00"))
+                mins = (r - c).total_seconds() / 60
+                if day not in mttr_by_date:
+                    mttr_by_date[day] = []
+                mttr_by_date[day].append(mins)
+            except Exception:
+                pass
+
+        words = inc.get("summary", "").lower()
+        for keyword in ["sip", "audio", "queue", "cpu", "dns", "registration", "routing", "firewall", "timeout", "memory"]:
+            if keyword in words:
+                summary_counts[keyword] = summary_counts.get(keyword, 0) + 1
+
+    sorted_dates = sorted(volume_by_date.keys())
+
+    volume_trend = [{"date": d, "count": volume_by_date[d]} for d in sorted_dates]
+    mttr_trend = [{"date": d, "mttr": round(sum(mttr_by_date[d]) / len(mttr_by_date[d]), 1)} for d in sorted_dates if d in mttr_by_date]
+    priority_trend = [{"date": d, **priority_by_date.get(d, {"P1": 0, "P2": 0, "P3": 0})} for d in sorted_dates]
+    recurring = sorted([{"pattern": k, "count": v} for k, v in summary_counts.items()], key=lambda x: x["count"], reverse=True)[:10]
+
+    return {
+        "volume_trend": volume_trend,
+        "mttr_trend": mttr_trend,
+        "priority_trend": priority_trend,
+        "recurring_patterns": recurring,
+        "total_incidents": len(incidents)
+    }
+
+
+@app.websocket("/ws/incidents")
+async def ws_endpoint(ws: WebSocket):
+    await ws.accept()
+    active_connections.append(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        active_connections.remove(ws)
+
+app.include_router(api_router)
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+@app.on_event("startup")
+async def startup():
+    logger.info("Starting AI Incident Co-Pilot Enterprise v2.0 (Lite)...")
+
+@app.on_event("shutdown")
+async def shutdown():
+    global simulation_running
+    simulation_running = False
 ```
-REACT_APP_BACKEND_URL=https://your-backend-url.onrender.com
+
+---
+
+## FILE 4: backend/rag_service.py
+
+```python
+"""Lightweight BM25 RAG Service for incident resolution knowledge base.
+Uses rank_bm25 instead of heavy ML libraries to stay within Render's 512MB RAM limit."""
+
+import os
+import logging
+from pathlib import Path
+from typing import List
+
+logger = logging.getLogger(__name__)
+
+
+class RAGService:
+    """Lightweight BM25-based retrieval for incident runbooks."""
+
+    def __init__(self):
+        self.documents: List[dict] = []
+        self.corpus: List[List[str]] = []
+        self.bm25 = None
+        self.is_loaded = False
+        self.runbooks_dir = Path(__file__).parent / "runbooks"
+        self._load_documents()
+
+    def _load_documents(self):
+        try:
+            if not self.runbooks_dir.exists():
+                logger.warning(f"Runbooks directory not found: {self.runbooks_dir}")
+                return
+
+            from rank_bm25 import BM25Okapi
+
+            for md_file in sorted(self.runbooks_dir.glob("*.md")):
+                text = md_file.read_text(encoding="utf-8")
+                chunks = self._chunk_text(text, chunk_size=500)
+                for chunk in chunks:
+                    self.documents.append({"source": md_file.name, "text": chunk})
+                    self.corpus.append(chunk.lower().split())
+
+            if self.corpus:
+                self.bm25 = BM25Okapi(self.corpus)
+                self.is_loaded = True
+                logger.info(f"BM25 RAG loaded: {len(self.documents)} chunks from {len(list(self.runbooks_dir.glob('*.md')))} runbooks")
+            else:
+                logger.warning("No runbook content found")
+        except Exception as e:
+            logger.error(f"RAG load error: {e}")
+            self.is_loaded = False
+
+    def _chunk_text(self, text: str, chunk_size: int = 500) -> List[str]:
+        paragraphs = text.split("\n\n")
+        chunks = []
+        current = ""
+        for para in paragraphs:
+            if len(current) + len(para) > chunk_size and current:
+                chunks.append(current.strip())
+                current = para
+            else:
+                current = current + "\n\n" + para if current else para
+        if current.strip():
+            chunks.append(current.strip())
+        return chunks
+
+    def retrieve(self, query: str, top_k: int = 3) -> str:
+        if not self.is_loaded or self.bm25 is None:
+            return "No runbook context available. Provide general IT troubleshooting advice."
+
+        try:
+            tokenized_query = query.lower().split()
+            scores = self.bm25.get_scores(tokenized_query)
+
+            top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+
+            parts = []
+            for idx in top_indices:
+                if scores[idx] > 0:
+                    doc = self.documents[idx]
+                    parts.append(f"[{doc['source']}]\n{doc['text']}")
+
+            if not parts:
+                return "No relevant runbook entries found. Provide general IT troubleshooting advice."
+
+            return "\n---\n".join(parts)
+        except Exception as e:
+            logger.error(f"RAG retrieve error: {e}")
+            return "Error retrieving runbook context. Provide general IT troubleshooting advice."
 ```
 
 ---
 
-## DEPLOYMENT
+## FILE 5: backend/Procfile
 
-Currently deploying on Render (free tier):
-- Backend: Web Service (Python)
-- Frontend: Static Site (React)
-- Database: MongoDB Atlas (free M0 tier)
-
----
-
-## CURRENT ISSUES
-
-1. Backend deployment failing on Render
-2. Need to configure environment variables correctly
-3. RAG service needs runbooks directory to exist
+```
+web: uvicorn server:app --host 0.0.0.0 --port $PORT
+```
 
 ---
 
-## HOW TO HELP
+## FILE 6: backend/build.sh
 
-Please review the code and suggest:
-1. Any bugs or issues you see
-2. Deployment improvements
-3. Code optimizations
-4. Security improvements
-5. Feature enhancements
+```bash
+#!/usr/bin/env bash
+set -e
+echo "Installing Python dependencies..."
+pip install --upgrade pip
+pip install -r requirements.txt
+echo "Creating logs directory..."
+mkdir -p logs
+echo "Build complete!"
+```
+
+---
+
+## FILE 7: backend/Dockerfile
+
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+RUN mkdir -p logs
+EXPOSE 8001
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
+```
+
+---
+
+## FILE 8: frontend/src/App.js
+
+> See the full file in your repository at `frontend/src/App.js`. 
+> It contains all 4 tabs (ANALYZE, DASHBOARD, HISTORY, TRENDS) with:
+> - Groq-powered ticket analysis with confidence scoring
+> - SLA Dashboard with Recharts pie/bar charts
+> - History page with filters (priority, status, search, date range) + pagination
+> - Trends page with volume, MTTR, priority distribution charts + recurring patterns
+> - PDF export via jsPDF on analyze results, dashboard rows, and detail modal
+> - Real-time simulation toggle
+
+---
+
+## FILE 9: frontend/package.json (key dependencies)
+
+```json
+{
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "axios": "^1.8.4",
+    "jspdf": "^2.5.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^3.8.1",
+    "sonner": "^2.0.3"
+  }
+}
+```
+
+---
+
+## FILE 10: render.yaml
+
+```yaml
+services:
+  - type: web
+    name: ai-incident-copilot-backend
+    runtime: python
+    region: oregon
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: GROQ_API_KEY
+        sync: false
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        value: incident_copilot
+      - key: CORS_ORIGINS
+        value: "*"
+    healthCheckPath: /api/health
+
+  - type: web
+    name: ai-incident-copilot-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: yarn install && yarn build
+    staticPublishPath: build
+    envVars:
+      - key: REACT_APP_BACKEND_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+```
+
+---
+
+## FILE 11: docker-compose.yml
+
+```yaml
+version: '3.8'
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8001:8001"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - MONGO_URL=mongodb://mongo:27017
+      - DB_NAME=incident_copilot
+    depends_on:
+      - mongo
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_BACKEND_URL: http://localhost:8001
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:
+```
+
+---
+
+## DEPLOYMENT CHECKLIST (Render Free Tier)
+
+1. Push code to GitHub
+2. On Render, create Backend Web Service:
+   - Root: `backend/`
+   - Build: `pip install -r requirements.txt`
+   - Start: `uvicorn server:app --host 0.0.0.0 --port $PORT`
+   - Env: `GROQ_API_KEY`, `MONGO_URL`, `DB_NAME=incident_copilot`
+3. Create Frontend Static Site:
+   - Root: `frontend/`
+   - Build: `yarn install && yarn build`
+   - Publish: `build`
+   - Env: `REACT_APP_BACKEND_URL=https://your-backend.onrender.com`
+4. Set `NODE_VERSION=20` in frontend env if needed

@@ -1,53 +1,32 @@
 version: '3.8'
-
 services:
-  mongodb:
-    image: mongo:latest
-    container_name: incident-copilot-mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-    networks:
-      - app-network
-
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: incident-copilot-backend
+    build: ./backend
     ports:
       - "8001:8001"
     environment:
-      - MONGO_URL=mongodb://mongodb:27017
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - MONGO_URL=mongodb://mongo:27017
       - DB_NAME=incident_copilot
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - CORS_ORIGINS=http://localhost:3000
     depends_on:
-      - mongodb
-    networks:
-      - app-network
-    volumes:
-      - ./backend/runbooks:/app/runbooks
-      - ./backend/logs:/app/logs
+      - mongo
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: incident-copilot-frontend
+      args:
+        REACT_APP_BACKEND_URL: http://localhost:8001
     ports:
       - "3000:80"
-    environment:
-      - REACT_APP_BACKEND_URL=http://localhost:8001
     depends_on:
       - backend
-    networks:
-      - app-network
 
-networks:
-  app-network:
-    driver: bridge
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
 
 volumes:
-  mongodb_data:
+  mongo_data:
