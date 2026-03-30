@@ -71,8 +71,8 @@ class RAGService:
     def get_relevant_context(self, query: str, top_k: int = 3) -> str:
         """Retrieve relevant context from runbooks for a given query"""
         if not self.is_loaded or self.index is None:
-            logger.warning("RAG index not loaded, returning empty context")
-            return "No runbook context available."
+            logger.warning("RAG index not loaded, returning generic context")
+            return "No runbook context available. Provide general IT troubleshooting advice."
         
         try:
             # Create retriever
@@ -84,13 +84,12 @@ class RAGService:
             nodes = retriever.retrieve(query)
             
             if not nodes:
-                return "No relevant runbook entries found."
+                return "No relevant runbook entries found. Provide general IT troubleshooting advice."
             
             # Combine context from retrieved nodes
             context_parts = []
             for i, node in enumerate(nodes, 1):
                 source = node.metadata.get('file_name', 'Unknown')
-                score = node.score if hasattr(node, 'score') else 'N/A'
                 context_parts.append(
                     f"[Source {i}: {source}]\n{node.text}\n"
                 )
@@ -99,4 +98,4 @@ class RAGService:
             
         except Exception as e:
             logger.error(f"Error retrieving context: {str(e)}")
-            return f"Error retrieving context: {str(e)}"
+            return "Error retrieving runbook context. Provide general IT troubleshooting advice."
