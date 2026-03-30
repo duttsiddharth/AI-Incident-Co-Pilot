@@ -24,6 +24,21 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="AI Incident Co-Pilot Enterprise", version="2.0.0")
 api_router = APIRouter(prefix="/api")
 
+# Initialize Groq client
+from groq import Groq
+groq_client = None
+groq_api_key = os.environ.get('GROQ_API_KEY')
+if groq_api_key:
+    try:
+        groq_client = Groq(api_key=groq_api_key)
+        logger.info("Groq client initialized")
+    except Exception as e:
+        logger.error(f"Groq init failed: {e}")
+
+# Initialize lightweight BM25 RAG
+from rag_service import RAGService
+rag_service = RAGService()
+
 # MongoDB connection (lazy load)
 db = None
 
@@ -170,43 +185,43 @@ async def analyze_ticket(input: TicketInput):
     logger.info(f"Analyzing: {input.ticket[:80]}...")
     
     try:
-        from openai import OpenAI
-        api_key = os.environ.get('OPENAI_API_KEY')
-        if not api_key:
-            raise HTTPException(500, "OPENAI_API_KEY not set")
+        # Retrieve runbook context via BM25 RAG
+        rag_context = rag_service.retrieve(input.ticket)
         
-        client = OpenAI(api_key=api_key)
-        
-        prompt = """Analyze this IT incident ticket. Respond in JSON:
-{
-    "summary": "1-2 sentence summary",
-    "priority": "P1, P2, or P3",
-    "root_cause": "Most likely cause",
-    "resolution_steps": "Step-by-step fix",
-    "bridge_update": "P1 communication or N/A",
-    "confidence_score": 0-100
-}
-P1=Critical outage (100+ users), P2=Degraded (10-100), P3=Minor (<10)"""
+        system_prompt = f"""You are an expert IT incident resolver for UC/CC infrastructure.
+Use the RUNBOOK context below to analyze the incident. Respond ONLY with valid JSON, no markdown.
 
-        # Retry logic
+RUNBOOK CONTEXT:
+{rag_context}
+
+Return this exact JSON structure:
+{{"summary": "1-2 sentence summary", "priority": "P1 or P2 or P3", "root_cause": "Most likely root cause", "resolution_steps": "Step-by-step resolution", "bridge_update": "P1 bridge communication or N/A", "confidence_score": 75}}
+
+Priority rules: P1=Critical outage (100+ users/total down), P2=Degraded service (10-100 users), P3=Minor issue (<10 users)"""
+
+        if not groq_client:
+            raise HTTPException(500, "GROQ_API_KEY not configured")
+
+        # Retry logic for Groq
+        response = None
         for attempt in range(3):
             try:
-                resp = client.chat.completions.create(
-                    model="gpt-4o-mini",
+                completion = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
                     messages=[
-                        {"role": "system", "content": prompt},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": input.ticket}
                     ],
-                    temperature=0.3
+                    temperature=0.2,
                 )
-                response = resp.choices[0].message.content
+                response = completion.choices[0].message.content
                 break
             except Exception as e:
                 if attempt == 2:
                     raise e
                 await asyncio.sleep(1)
         
-        # Parse JSON
+        # Parse JSON response
         try:
             text = response
             if "```json" in text:
@@ -214,7 +229,7 @@ P1=Critical outage (100+ users), P2=Degraded (10-100), P3=Minor (<10)"""
             elif "```" in text:
                 text = text.split("```")[1].split("```")[0]
             data = json.loads(text.strip())
-        except:
+        except Exception:
             data = {"summary": response[:200], "priority": "P3", "root_cause": "See summary", 
                     "resolution_steps": response, "bridge_update": "N/A", "confidence_score": 50}
         
@@ -222,7 +237,9 @@ P1=Critical outage (100+ users), P2=Degraded (10-100), P3=Minor (<10)"""
             return "\n".join(v) if isinstance(v, list) else str(v) if v else ""
         
         priority = data.get("priority", "P3")
-        confidence = int(data.get("confidence_score", 50))
+        if priority not in ("P1", "P2", "P3"):
+            priority = "P3"
+        confidence = min(100, max(0, int(data.get("confidence_score", 50))))
         
         incident = Incident(
             ticket=input.ticket,
@@ -243,7 +260,7 @@ P1=Critical outage (100+ users), P2=Degraded (10-100), P3=Minor (<10)"""
         doc['updated_at'] = doc['updated_at'].isoformat()
         
         database = get_db()
-        if database:
+        if database is not None:
             await database.incidents.insert_one(doc)
         else:
             in_memory_incidents[incident.id] = doc
@@ -261,7 +278,7 @@ P1=Critical outage (100+ users), P2=Degraded (10-100), P3=Minor (<10)"""
 @api_router.get("/incidents")
 async def get_incidents(limit: int = 50, status: Optional[str] = None):
     database = get_db()
-    if database:
+    if database is not None:
         query = {"status": status} if status else {}
         incidents = await database.incidents.find(query, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
     else:
@@ -273,7 +290,7 @@ async def get_incidents(limit: int = 50, status: Optional[str] = None):
 @api_router.get("/incidents/{id}")
 async def get_incident(id: str):
     database = get_db()
-    inc = await database.incidents.find_one({"id": id}, {"_id": 0}) if database else in_memory_incidents.get(id)
+    inc = await database.incidents.find_one({"id": id}, {"_id": 0}) if database is not None else in_memory_incidents.get(id)
     if not inc:
         raise HTTPException(404, "Not found")
     return calculate_sla_status(inc)
@@ -294,7 +311,7 @@ async def update_incident(id: str, update: IncidentUpdate):
     if update.resolution_steps:
         data['resolution_steps'] = update.resolution_steps
     
-    if database:
+    if database is not None:
         result = await database.incidents.update_one({"id": id}, {"$set": data})
         if result.modified_count == 0:
             raise HTTPException(404, "Not found")
@@ -311,7 +328,7 @@ async def update_incident(id: str, update: IncidentUpdate):
 @api_router.get("/sla-dashboard", response_model=SLADashboard)
 async def get_dashboard():
     database = get_db()
-    incidents = await database.incidents.find({}, {"_id": 0}).to_list(1000) if database else list(in_memory_incidents.values())
+    incidents = await database.incidents.find({}, {"_id": 0}).to_list(1000) if database is not None else list(in_memory_incidents.values())
     
     if not incidents:
         return SLADashboard(total_incidents=0, active_incidents=0, resolved_incidents=0, 

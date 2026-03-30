@@ -664,7 +664,7 @@ function App() {
       <footer className="border-t border-black/10 mt-12 py-4">
         <div className="max-w-[1800px] mx-auto px-4 flex justify-between text-xs font-mono text-gray-400">
           <span>AI INCIDENT CO-PILOT ENTERPRISE v2.0</span>
-          <span>GPT-4O-MINI + RAG + SLA TRACKING</span>
+          <span>GROQ LLAMA-3.3 + RAG + SLA TRACKING</span>
         </div>
       </footer>
     </div>

@@ -1,101 +1,84 @@
-"""RAG Service using LlamaIndex and FAISS for incident resolution knowledge base"""
+"""Lightweight BM25 RAG Service for incident resolution knowledge base.
+Uses rank_bm25 instead of heavy ML libraries to stay within Render's 512MB RAM limit."""
 
 import os
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import List
 
 logger = logging.getLogger(__name__)
 
+
 class RAGService:
-    """Retrieval Augmented Generation service for incident runbooks"""
-    
+    """Lightweight BM25-based retrieval for incident runbooks."""
+
     def __init__(self):
-        self.index = None
+        self.documents: List[dict] = []
+        self.corpus: List[List[str]] = []
+        self.bm25 = None
         self.is_loaded = False
-        self.runbooks_dir = Path(__file__).parent / 'runbooks'
-        
-    def load_documents(self):
-        """Load runbook documents and create FAISS index"""
+        self.runbooks_dir = Path(__file__).parent / "runbooks"
+        self._load_documents()
+
+    def _load_documents(self):
         try:
-            logger.info("Loading runbook documents for RAG...")
-            
-            # Import LlamaIndex components
-            from llama_index.core import (
-                SimpleDirectoryReader,
-                VectorStoreIndex,
-                Settings
-            )
-            from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-            
-            # Configure embedding model (local, no API needed)
-            embed_model = HuggingFaceEmbedding(
-                model_name="sentence-transformers/all-MiniLM-L6-v2"
-            )
-            Settings.embed_model = embed_model
-            Settings.llm = None  # We'll use external LLM
-            
-            # Check if runbooks directory exists
             if not self.runbooks_dir.exists():
                 logger.warning(f"Runbooks directory not found: {self.runbooks_dir}")
-                self.is_loaded = False
                 return
-            
-            # Load documents
-            documents = SimpleDirectoryReader(
-                input_dir=str(self.runbooks_dir),
-                required_exts=[".md"],
-                recursive=True
-            ).load_data()
-            
-            if not documents:
-                logger.warning("No runbook documents found")
-                self.is_loaded = False
-                return
-            
-            logger.info(f"Loaded {len(documents)} runbook documents")
-            
-            # Create vector index
-            self.index = VectorStoreIndex.from_documents(
-                documents,
-                show_progress=True
-            )
-            
-            self.is_loaded = True
-            logger.info("RAG index created successfully")
-            
+
+            from rank_bm25 import BM25Okapi
+
+            for md_file in sorted(self.runbooks_dir.glob("*.md")):
+                text = md_file.read_text(encoding="utf-8")
+                chunks = self._chunk_text(text, chunk_size=500)
+                for chunk in chunks:
+                    self.documents.append({"source": md_file.name, "text": chunk})
+                    self.corpus.append(chunk.lower().split())
+
+            if self.corpus:
+                self.bm25 = BM25Okapi(self.corpus)
+                self.is_loaded = True
+                logger.info(f"BM25 RAG loaded: {len(self.documents)} chunks from {len(list(self.runbooks_dir.glob('*.md')))} runbooks")
+            else:
+                logger.warning("No runbook content found")
         except Exception as e:
-            logger.error(f"Error loading RAG documents: {str(e)}")
+            logger.error(f"RAG load error: {e}")
             self.is_loaded = False
-    
-    def get_relevant_context(self, query: str, top_k: int = 3) -> str:
-        """Retrieve relevant context from runbooks for a given query"""
-        if not self.is_loaded or self.index is None:
-            logger.warning("RAG index not loaded, returning generic context")
+
+    def _chunk_text(self, text: str, chunk_size: int = 500) -> List[str]:
+        paragraphs = text.split("\n\n")
+        chunks = []
+        current = ""
+        for para in paragraphs:
+            if len(current) + len(para) > chunk_size and current:
+                chunks.append(current.strip())
+                current = para
+            else:
+                current = current + "\n\n" + para if current else para
+        if current.strip():
+            chunks.append(current.strip())
+        return chunks
+
+    def retrieve(self, query: str, top_k: int = 3) -> str:
+        if not self.is_loaded or self.bm25 is None:
             return "No runbook context available. Provide general IT troubleshooting advice."
-        
+
         try:
-            # Create retriever
-            retriever = self.index.as_retriever(
-                similarity_top_k=top_k
-            )
-            
-            # Retrieve relevant nodes
-            nodes = retriever.retrieve(query)
-            
-            if not nodes:
+            tokenized_query = query.lower().split()
+            scores = self.bm25.get_scores(tokenized_query)
+
+            top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+
+            parts = []
+            for idx in top_indices:
+                if scores[idx] > 0:
+                    doc = self.documents[idx]
+                    parts.append(f"[{doc['source']}]\n{doc['text']}")
+
+            if not parts:
                 return "No relevant runbook entries found. Provide general IT troubleshooting advice."
-            
-            # Combine context from retrieved nodes
-            context_parts = []
-            for i, node in enumerate(nodes, 1):
-                source = node.metadata.get('file_name', 'Unknown')
-                context_parts.append(
-                    f"[Source {i}: {source}]\n{node.text}\n"
-                )
-            
-            return "\n---\n".join(context_parts)
-            
+
+            return "\n---\n".join(parts)
         except Exception as e:
-            logger.error(f"Error retrieving context: {str(e)}")
+            logger.error(f"RAG retrieve error: {e}")
             return "Error retrieving runbook context. Provide general IT troubleshooting advice."
