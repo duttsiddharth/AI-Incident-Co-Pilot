@@ -178,6 +178,8 @@ async def health():
 
 @api_router.post("/analyze", response_model=Incident)
 async def analyze_ticket(input: TicketInput):
+    if not input.ticket.strip():
+        raise HTTPException(400, "Ticket text is required")
     valid, msg = check_guardrails(input.ticket)
     if not valid:
         raise HTTPException(400, msg)
