@@ -1,7 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
@@ -10,26 +9,17 @@ from typing import List, Optional
 import uuid
 from datetime import datetime, timezone
 import json
-import asyncio
 
-# Load environment variables first
+# Load environment variables
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# Configure logging (console only for cloud deployment)
+# Configure logging (console only)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# MongoDB connection
-mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ.get('DB_NAME', 'incident_copilot')]
 
 # Create the main app
 app = FastAPI(title="AI Incident Co-Pilot", version="1.0.0")
@@ -37,9 +27,38 @@ app = FastAPI(title="AI Incident Co-Pilot", version="1.0.0")
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-# Initialize RAG service
-from rag_service import RAGService
-rag_service = RAGService()
+# MongoDB connection (lazy load)
+db = None
+
+def get_db():
+    global db
+    if db is None:
+        try:
+            from motor.motor_asyncio import AsyncIOMotorClient
+            mongo_url = os.environ.get('MONGO_URL')
+            if mongo_url:
+                client = AsyncIOMotorClient(mongo_url)
+                db = client[os.environ.get('DB_NAME', 'incident_copilot')]
+                logger.info("MongoDB connected")
+            else:
+                logger.warning("MONGO_URL not set, database disabled")
+        except Exception as e:
+            logger.error(f"MongoDB connection failed: {e}")
+    return db
+
+# RAG service (lazy load)
+rag_service = None
+
+def get_rag_service():
+    global rag_service
+    if rag_service is None:
+        try:
+            from rag_service import RAGService
+            rag_service = RAGService()
+            rag_service.load_documents()
+        except Exception as e:
+            logger.error(f"RAG service failed to load: {e}")
+    return rag_service
 
 # Pydantic Models
 class TicketInput(BaseModel):
@@ -59,15 +78,6 @@ class AnalysisResult(BaseModel):
     needs_human_review: bool
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-class AnalysisLog(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    ticket_input: str
-    gpt_response: Optional[str] = None
-    error: Optional[str] = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
 # Routes
 @api_router.get("/")
 async def root():
@@ -75,63 +85,51 @@ async def root():
 
 @api_router.get("/health")
 async def health_check():
-    return {"status": "healthy", "rag_loaded": rag_service.is_loaded}
+    rag = get_rag_service()
+    return {
+        "status": "healthy", 
+        "rag_loaded": rag.is_loaded if rag else False,
+        "db_connected": get_db() is not None
+    }
 
 @api_router.post("/analyze", response_model=AnalysisResult)
 async def analyze_ticket(input: TicketInput):
     """Analyze an IT incident ticket using AI and RAG"""
     logger.info(f"Received ticket for analysis: {input.ticket[:100]}...")
     
-    log_entry = AnalysisLog(ticket_input=input.ticket)
-    
     try:
-        # Get relevant context from RAG
-        rag_context = await asyncio.to_thread(
-            rag_service.get_relevant_context, 
-            input.ticket
-        )
-        logger.info(f"RAG context retrieved: {len(rag_context)} chars")
+        # Get RAG context (optional)
+        rag_context = "No runbook context available."
+        rag = get_rag_service()
+        if rag and rag.is_loaded:
+            try:
+                rag_context = rag.get_relevant_context(input.ticket)
+            except Exception as e:
+                logger.warning(f"RAG retrieval failed: {e}")
         
-        # Call LLM for analysis using standard OpenAI SDK
+        # Call OpenAI
         from openai import OpenAI
         
         api_key = os.environ.get('OPENAI_API_KEY')
         if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+            raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
         
         client = OpenAI(api_key=api_key)
         
         system_prompt = """You are an expert IT incident analyst.
-
-Analyze the incident ticket and provide a structured response in STRICT JSON format.
-
-Your response MUST be valid JSON with these exact fields:
+Analyze the incident ticket and respond in JSON format with these fields:
 {
-    "summary": "Brief 1-2 sentence summary of the incident",
-    "priority": "P1, P2, or P3 based on severity (P1=Critical/Service Down, P2=High/Degraded, P3=Medium/Minor)",
-    "root_cause": "Most likely root cause based on symptoms described",
-    "resolution_steps": "Step-by-step resolution actions based on runbook knowledge",
-    "bridge_update": "Professional bridge communication update for stakeholders (only for P1 incidents, otherwise 'N/A')",
-    "confidence_score": 0-100 integer indicating your confidence in the analysis,
-    "needs_human_review": true/false based on complexity and confidence
+    "summary": "Brief 1-2 sentence summary",
+    "priority": "P1, P2, or P3",
+    "root_cause": "Most likely root cause",
+    "resolution_steps": "Step-by-step resolution",
+    "bridge_update": "Professional update for P1 incidents, or N/A",
+    "confidence_score": 0-100,
+    "needs_human_review": true/false
 }
+P1=Critical outage, P2=Degraded service, P3=Minor issue"""
 
-Rules:
-- P1: Complete service outage, 100+ users affected, revenue impact
-- P2: Partial outage, degraded service, 10-100 users affected
-- P3: Minor issue, workaround available, <10 users affected
-- Set needs_human_review to true if confidence_score < 80 or if the issue is ambiguous
-- Bridge updates should be concise, professional, and include: Issue Summary, Impact, Current Status, Next Steps, ETA if known"""
-
-        user_prompt = f"""Analyze this IT incident ticket:
-
-TICKET:
-{input.ticket}
-
-RELEVANT RUNBOOK CONTEXT:
-{rag_context}
-
-Provide your analysis in the exact JSON format specified. Ensure resolution_steps are based on the runbook context when applicable."""
+        user_prompt = f"Analyze this ticket:\n\n{input.ticket}\n\nContext:\n{rag_context}"
 
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -143,122 +141,91 @@ Provide your analysis in the exact JSON format specified. Ensure resolution_step
         )
         
         response = completion.choices[0].message.content
+        logger.info(f"LLM response received")
         
-        log_entry.gpt_response = response
-        logger.info(f"LLM response received: {response[:200]}...")
-        
-        # Parse JSON response
+        # Parse JSON
         try:
-            # Extract JSON from response (handle markdown code blocks)
             json_str = response
             if "```json" in response:
                 json_str = response.split("```json")[1].split("```")[0]
             elif "```" in response:
                 json_str = response.split("```")[1].split("```")[0]
-            
             analysis_data = json.loads(json_str.strip())
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {e}")
-            # Fallback parsing
+        except:
             analysis_data = {
-                "summary": "Unable to parse structured response",
+                "summary": response[:200],
                 "priority": "P3",
-                "root_cause": "Analysis parsing error - please review manually",
+                "root_cause": "See summary",
                 "resolution_steps": response,
                 "bridge_update": "N/A",
-                "confidence_score": 30,
+                "confidence_score": 50,
                 "needs_human_review": True
             }
         
-        # Validate and normalize data
-        confidence = int(analysis_data.get("confidence_score", 50))
-        needs_review = analysis_data.get("needs_human_review", confidence < 80)
+        # Normalize fields
+        def norm(val):
+            if isinstance(val, list):
+                return "\n".join(str(v) for v in val)
+            return str(val) if val else ""
         
-        # Handle cases where LLM returns lists instead of strings
-        def normalize_field(field_value, default=""):
-            if isinstance(field_value, list):
-                return "\n".join(str(item) for item in field_value)
-            return str(field_value) if field_value else default
-        
-        # Create result
         result = AnalysisResult(
             ticket=input.ticket,
-            summary=normalize_field(analysis_data.get("summary"), "Analysis pending"),
+            summary=norm(analysis_data.get("summary", "")),
             priority=analysis_data.get("priority", "P3"),
-            root_cause=normalize_field(analysis_data.get("root_cause"), "Unable to determine"),
-            resolution_steps=normalize_field(analysis_data.get("resolution_steps"), "Manual review required"),
-            bridge_update=normalize_field(analysis_data.get("bridge_update"), "N/A"),
-            confidence_score=confidence,
-            needs_human_review=needs_review
+            root_cause=norm(analysis_data.get("root_cause", "")),
+            resolution_steps=norm(analysis_data.get("resolution_steps", "")),
+            bridge_update=norm(analysis_data.get("bridge_update", "N/A")),
+            confidence_score=int(analysis_data.get("confidence_score", 50)),
+            needs_human_review=analysis_data.get("needs_human_review", True)
         )
         
-        # Store analysis in database
-        doc = result.model_dump()
-        doc['timestamp'] = doc['timestamp'].isoformat()
-        await db.analyses.insert_one(doc)
+        # Save to DB (optional)
+        database = get_db()
+        if database:
+            try:
+                doc = result.model_dump()
+                doc['timestamp'] = doc['timestamp'].isoformat()
+                await database.analyses.insert_one(doc)
+            except Exception as e:
+                logger.warning(f"DB save failed: {e}")
         
-        # Store log
-        log_doc = log_entry.model_dump()
-        log_doc['timestamp'] = log_doc['timestamp'].isoformat()
-        await db.analysis_logs.insert_one(log_doc)
-        
-        logger.info(f"Analysis complete: Priority={result.priority}, Confidence={result.confidence_score}")
         return result
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Analysis error: {str(e)}")
-        log_entry.error = str(e)
-        log_doc = log_entry.model_dump()
-        log_doc['timestamp'] = log_doc['timestamp'].isoformat()
-        await db.analysis_logs.insert_one(log_doc)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
-@api_router.get("/analyses", response_model=List[AnalysisResult])
+@api_router.get("/analyses")
 async def get_analyses(limit: int = 20):
     """Get recent analyses"""
-    analyses = await db.analyses.find(
-        {}, 
-        {"_id": 0}
-    ).sort("timestamp", -1).limit(limit).to_list(limit)
-    
-    for analysis in analyses:
-        if isinstance(analysis.get('timestamp'), str):
-            analysis['timestamp'] = datetime.fromisoformat(analysis['timestamp'])
-    
-    return analyses
+    database = get_db()
+    if not database:
+        return []
+    try:
+        analyses = await database.analyses.find({}, {"_id": 0}).sort("timestamp", -1).limit(limit).to_list(limit)
+        return analyses
+    except:
+        return []
 
-@api_router.get("/runbooks")
-async def list_runbooks():
-    """List available runbooks"""
-    runbooks_dir = ROOT_DIR / 'runbooks'
-    runbooks = []
-    if runbooks_dir.exists():
-        for f in runbooks_dir.glob('*.md'):
-            runbooks.append({
-                "name": f.stem.replace('_', ' ').title(),
-                "filename": f.name
-            })
-    return {"runbooks": runbooks}
-
-# Include the router
+# Include router
 app.include_router(api_router)
 
-# CORS middleware
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 @app.on_event("startup")
-async def startup_event():
-    """Initialize services on startup"""
+async def startup():
     logger.info("Starting AI Incident Co-Pilot...")
-    # Load RAG index in background
-    asyncio.create_task(asyncio.to_thread(rag_service.load_documents))
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+    # Pre-warm services (optional, don't block startup)
+    try:
+        get_db()
+    except:
+        pass
