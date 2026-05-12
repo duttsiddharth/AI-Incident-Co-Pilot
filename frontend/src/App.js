@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import MonitoringDashboard from './components/MonitoringDashboard';
+import MonitoringDashboard from './components/ui/MonitoringDashboard';
 import "@/App.css";
 import axios from "axios";
 import { 
