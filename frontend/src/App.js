@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import MonitoringDashboard from './components/MonitoringDashboard';
 import "@/App.css";
 import axios from "axios";
 import { 
@@ -329,11 +330,13 @@ function App() {
   const copyToClipboard = (text) => { navigator.clipboard.writeText(text); toast.success("Copied to clipboard"); };
 
   // ── Tab config ──
-  const tabs = [
-    { id: "analyze", label: "ANALYZE" },
-    { id: "dashboard", label: "DASHBOARD" },
-    { id: "history", label: "HISTORY" },
-    { id: "trends", label: "TRENDS" }
+ const tabs = [
+  { id: "analyze", label: "ANALYZE" },
+  { id: "dashboard", label: "DASHBOARD" },
+  { id: "history", label: "HISTORY" },
+  { id: "trends", label: "TRENDS" },
+  { id: "monitoring", label: "MONITORING" }
+
   ];
 
   return (
@@ -759,6 +762,9 @@ function App() {
         )}
 
         {/* ═══════════ TRENDS TAB ═══════════ */}
+{/* ═══════════ MONITORING TAB ═══════════ */}
+{activeTab === "monitoring" && (   <MonitoringDashboard />
+)}
         {activeTab === "trends" && (
           <div className="space-y-6" data-testid="trends-tab">
             <div className="flex items-center justify-between">
