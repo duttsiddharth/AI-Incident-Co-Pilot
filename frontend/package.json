@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "zustand": "^4.5.2",
     "@hookform/resolvers": "^5.0.1",
     "@phosphor-icons/react": "^2.1.10",
     "@radix-ui/react-accordion": "^1.2.8",
@@ -75,6 +76,11 @@
     ]
   },
   "devDependencies": {
+    "vite": "^5.4.0",
+"@vitejs/plugin-react": "^4.3.1",
+"typescript": "^5.5.0",
+"@types/react": "^18.3.0",
+"@types/react-dom": "^18.3.0",
     "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
     "@craco/craco": "^7.1.0",
     "@emergentbase/visual-edits": "https://assets.emergent.sh/npm/emergentbase-visual-edits-1.0.8.tgz",
