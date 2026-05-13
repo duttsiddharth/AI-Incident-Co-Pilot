@@ -1,0 +1,4 @@
+2026-05-13 10:30:22 ERROR SIP Registration Timeout user=1001 device=SEP001122334455
+2026-05-13 10:31:10 WARNING CUCM CPU High cpu=95%
+2026-05-13 10:31:44 ERROR One-way audio detected callid=ABC123
+2026-05-13 10:32:01 INFO SIP trunk recovered
