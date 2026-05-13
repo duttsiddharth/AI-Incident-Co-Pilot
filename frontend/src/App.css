@@ -1,58 +1,8 @@
-/* App-specific overrides and animations */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-/* Ensure no rounded corners anywhere */
-* {
-    border-radius: 0 !important;
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
 }
-
-/* ASCII spinner keyframes */
-@keyframes ascii-spin {
-    0% { content: '|'; }
-    25% { content: '/'; }
-    50% { content: '-'; }
-    75% { content: '\\'; }
-}
-
-/* Smooth scroll */
-html {
-    scroll-behavior: smooth;
-}
-
-/* Focus visible for accessibility */
-:focus-visible {
-    outline: 2px solid #0B0C10;
-    outline-offset: 2px;
-}
-
-/* Selection color */
-::selection {
-    background-color: #0B0C10;
-    color: #F9FAFB;
-}
-
-/* Card shadow on hover */
-.card-hover:hover {
-    box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
-    border-color: #0B0C10 !important;
-    transform: translateY(-2px);
-}
-
-/* Terminal block styling */
-.terminal-block {
-    background: linear-gradient(180deg, #0B0C10 0%, #1a1b1f 100%);
-    font-variant-ligatures: none;
-}
-
-/* Animate confidence bar on load */
-@keyframes grow-width {
-    from { width: 0; }
-}
-
-.confidence-fill {
-    animation: grow-width 1s ease-out;
-}
-
-/* Loading card border animation */
-@keyframes border-pulse {
-    0%, 100% {
-        border-color
