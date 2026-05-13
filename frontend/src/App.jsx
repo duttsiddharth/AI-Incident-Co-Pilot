@@ -33,7 +33,7 @@ import {
 } from "recharts";
 import { jsPDF } from "jspdf";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = import.meta.env.VITE_API_URL || "";
 const API = `${BACKEND_URL}/api`;
 
 const SAMPLE_TICKETS = [
