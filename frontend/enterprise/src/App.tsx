@@ -15,8 +15,6 @@ import { RouterProvider } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { router } from './router';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
-import './styles/globals.css';
-
 const App: React.FC = () => (
   <ErrorBoundary scope="root">
     <RouterProvider router={router} />
